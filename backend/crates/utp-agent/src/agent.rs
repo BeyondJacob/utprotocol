@@ -24,13 +24,6 @@ impl Agent {
     }
 
     pub async fn process_and_send(&self, prompt: &str, model: &str) -> Result<()> {
-        // Your task: Implement these steps
-        // 1. Create a ChatRequest with the prompt
-        // 2. Call self.llama_client.chat()
-        // 3. Extract the response text
-        // 4. Compress it using utp_core
-        // 5. Create a Frame with compressed data
-        // 6. Send the frame via message_bus
         let chat_request = utp_llm::ChatRequest {
             model: model.to_string(),
             messages: vec![utp_llm::Message {
