@@ -50,3 +50,4 @@ logs/
 # Environment
 .env
 .env.local
+llama.cpp/
