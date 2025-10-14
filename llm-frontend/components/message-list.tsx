@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { ScrollArea } from "./ui/scroll-area";
 import { Card } from "./ui/card";
 import type { Message } from "./chat-interface";
 
@@ -24,7 +23,7 @@ export function MessageList({ messages }: { messages: Message[] }) {
   }
 
   return (
-    <ScrollArea className="flex-1 pr-4 mb-4">
+    <div className="flex-1 overflow-y-auto pr-4 mb-4">
       <div className="space-y-4">
         {messages.map((message) => (
           <div
@@ -53,6 +52,6 @@ export function MessageList({ messages }: { messages: Message[] }) {
         ))}
         <div ref={scrollRef} />
       </div>
-    </ScrollArea>
+    </div>
   );
 }

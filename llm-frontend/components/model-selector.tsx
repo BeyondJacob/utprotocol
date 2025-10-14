@@ -28,7 +28,9 @@ export function ModelSelector({
   return (
     <Select value={currentModel} onValueChange={onModelChange}>
       <SelectTrigger className="w-[280px]">
-        <SelectValue placeholder="Select a model" />
+        <SelectValue placeholder="Select a model">
+          {currentModel}
+        </SelectValue>
       </SelectTrigger>
       <SelectContent>
         {models.map((model) => (
