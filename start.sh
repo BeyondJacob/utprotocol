@@ -1,0 +1,49 @@
+#!/bin/bash
+
+# Colors for output
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+echo -e "${BLUE}Starting UT Protocol...${NC}"
+
+# Load environment variables
+set -a
+source .env
+set +a
+
+# Function to kill background processes on exit
+cleanup() {
+    echo -e "\n${BLUE}Shutting down services...${NC}"
+    kill $BACKEND_PID $FRONTEND_PID 2>/dev/null
+    wait $BACKEND_PID $FRONTEND_PID 2>/dev/null
+    echo -e "${GREEN}Services stopped${NC}"
+    exit 0
+}
+
+trap cleanup INT TERM
+
+# Start backend
+echo -e "${GREEN}Starting backend on http://127.0.0.1:3001${NC}"
+cd llm-backend
+cargo run &
+BACKEND_PID=$!
+cd ..
+
+# Wait a bit for backend to start
+sleep 2
+
+# Start frontend
+echo -e "${GREEN}Starting frontend on http://localhost:3000${NC}"
+cd llm-frontend
+npm run dev &
+FRONTEND_PID=$!
+cd ..
+
+echo -e "\n${GREEN}✅ Both services started!${NC}"
+echo -e "Frontend: ${BLUE}http://localhost:3000${NC}"
+echo -e "Backend:  ${BLUE}http://127.0.0.1:3001${NC}"
+echo -e "\nPress Ctrl+C to stop both services"
+
+# Wait for both processes
+wait $BACKEND_PID $FRONTEND_PID
