@@ -1,20 +1,28 @@
 use axum::{
-    extract::State,
+    extract::{Path, State},
     http::{Method, StatusCode},
     response::IntoResponse,
-    routing::{get, post},
+    routing::{delete, get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use sqlx::PgPool;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
+
+mod db;
+use db::{
+    models::{Conversation, ConversationWithMessages, CreateConversationRequest, Message},
+    repository::{ConversationRepository, MessageRepository},
+};
 
 // Shared application state
 #[derive(Clone)]
 struct AppState {
     active_model: Arc<RwLock<String>>,
     ollama_client: reqwest::Client,
+    db_pool: PgPool,
 }
 
 // Request/Response types
@@ -22,6 +30,7 @@ struct AppState {
 struct ChatRequest {
     model: String,
     message: String,
+    conversation_id: Option<i32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -90,16 +99,30 @@ struct OllamaPullRequest {
 
 #[tokio::main]
 async fn main() {
+    // Load environment variables from .env file
+    dotenvy::from_filename("../.env").ok();
+
+    // Initialize database
+    let database_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://jacobowens@localhost/utprotocol".to_string());
+
+    let db_pool = db::init_db(&database_url)
+        .await
+        .expect("Failed to initialize database");
+
+    println!("✅ Database connected and initialized");
+
     // Initialize state
     let state = AppState {
         active_model: Arc::new(RwLock::new("gpt-oss:20b".to_string())),
         ollama_client: reqwest::Client::new(),
+        db_pool,
     };
 
     // Configure CORS for Next.js frontend
     let cors = CorsLayer::new()
         .allow_origin(Any)
-        .allow_methods([Method::GET, Method::POST])
+        .allow_methods([Method::GET, Method::POST, Method::DELETE])
         .allow_headers(Any);
 
     // Build router
@@ -110,6 +133,11 @@ async fn main() {
         .route("/switch-model", post(switch_model_handler))
         .route("/download-model", post(download_model_handler))
         .route("/delete-model", post(delete_model_handler))
+        // Conversation routes
+        .route("/conversations", get(get_conversations_handler))
+        .route("/conversations", post(create_conversation_handler))
+        .route("/conversations/:id", get(get_conversation_handler))
+        .route("/conversations/:id", delete(delete_conversation_handler))
         .with_state(state)
         .layer(cors);
 
@@ -198,6 +226,32 @@ async fn chat_handler(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let start = std::time::Instant::now();
 
+    // Save user message if conversation_id is provided
+    if let Some(conversation_id) = payload.conversation_id {
+        let message_repo = MessageRepository::new(state.db_pool.clone());
+        message_repo
+            .create_message(conversation_id, "user", &payload.message, None)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to save user message: {}", e),
+                )
+            })?;
+
+        // Update conversation timestamp
+        let conv_repo = ConversationRepository::new(state.db_pool.clone());
+        conv_repo
+            .update_conversation_timestamp(conversation_id)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to update conversation timestamp: {}", e),
+                )
+            })?;
+    }
+
     // Call Ollama API
     let ollama_request = OllamaGenerateRequest {
         model: payload.model.clone(),
@@ -233,6 +287,25 @@ async fn chat_handler(
     })?;
 
     let latency_ms = start.elapsed().as_millis();
+
+    // Save assistant message if conversation_id is provided
+    if let Some(conversation_id) = payload.conversation_id {
+        let message_repo = MessageRepository::new(state.db_pool.clone());
+        message_repo
+            .create_message(
+                conversation_id,
+                "assistant",
+                &ollama_response.response,
+                Some(latency_ms as i32),
+            )
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to save assistant message: {}", e),
+                )
+            })?;
+    }
 
     Ok(Json(ChatResponse {
         response: ollama_response.response,
@@ -331,5 +404,93 @@ async fn delete_model_handler(
     Ok(Json(serde_json::json!({
         "success": true,
         "message": format!("Model {} deleted", payload.model)
+    })))
+}
+
+// Conversation handlers
+async fn get_conversations_handler(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let repo = ConversationRepository::new(state.db_pool.clone());
+
+    let conversations = repo.get_all_conversations().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to fetch conversations: {}", e),
+        )
+    })?;
+
+    Ok(Json(conversations))
+}
+
+async fn create_conversation_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<CreateConversationRequest>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let repo = ConversationRepository::new(state.db_pool.clone());
+
+    let conversation = repo
+        .create_conversation(&payload.title, &payload.model)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to create conversation: {}", e),
+            )
+        })?;
+
+    Ok(Json(conversation))
+}
+
+async fn get_conversation_handler(
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let conv_repo = ConversationRepository::new(state.db_pool.clone());
+    let msg_repo = MessageRepository::new(state.db_pool.clone());
+
+    let conversation = conv_repo
+        .get_conversation(id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to fetch conversation: {}", e),
+            )
+        })?
+        .ok_or((StatusCode::NOT_FOUND, "Conversation not found".to_string()))?;
+
+    let messages = msg_repo
+        .get_messages_by_conversation(id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to fetch messages: {}", e),
+            )
+        })?;
+
+    Ok(Json(ConversationWithMessages {
+        conversation,
+        messages,
+    }))
+}
+
+async fn delete_conversation_handler(
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let repo = ConversationRepository::new(state.db_pool.clone());
+
+    repo.delete_conversation(id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to delete conversation: {}", e),
+        )
+    })?;
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": "Conversation deleted"
     })))
 }
