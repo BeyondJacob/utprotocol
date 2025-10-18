@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { ChatWindow, type ModelInfo } from "./chat-window";
 import { ChatSidebar, type Conversation } from "./chat-sidebar";
 import { Button } from "./ui/button";
-import { Sheet, SheetContent, SheetTrigger } from "./ui/sheet";
+import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "./ui/sheet";
 import { Menu, Plus, Columns2, Columns3, Square } from "lucide-react";
 
 type ChatWindowState = {
@@ -210,6 +210,7 @@ export function MultiChatInterface() {
                 </Button>
               </SheetTrigger>
               <SheetContent side="left" className="p-0 w-[280px] sm:w-[320px] gap-0">
+                <SheetTitle className="sr-only">Chat History</SheetTitle>
                 <div className="h-full pt-12">
                   <SidebarContent />
                 </div>
