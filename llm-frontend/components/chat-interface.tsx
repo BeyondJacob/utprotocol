@@ -13,10 +13,27 @@ export type Message = {
   content: string;
   model?: string;
   latency?: number;
+  tokens_per_second?: number;
+  total_tokens?: number;
+};
+
+type DbMessage = {
+  id: number;
+  conversation_id: number;
+  role: string;
+  content: string;
+  model: string | null;
+  latency_ms: number | null;
+  tokens_per_second: number | null;
+  total_tokens: number | null;
+  created_at: string;
 };
 
 export type ModelInfo = {
   name: string;
+  display_name: string;
+  provider: string;
+  is_local: boolean;
   downloaded: boolean;
 };
 
@@ -64,11 +81,14 @@ export function ChatInterface() {
       );
       const data = await response.json();
 
-      const loadedMessages: Message[] = data.messages.map((msg: any) => ({
+      const loadedMessages: Message[] = data.messages.map((msg: DbMessage) => ({
         id: msg.id.toString(),
-        role: msg.role,
+        role: msg.role as "user" | "assistant",
         content: msg.content,
-        latency: msg.latency_ms,
+        model: msg.model ?? undefined,
+        latency: msg.latency_ms ?? undefined,
+        tokens_per_second: msg.tokens_per_second ?? undefined,
+        total_tokens: msg.total_tokens ?? undefined,
       }));
 
       setMessages(loadedMessages);
@@ -193,6 +213,8 @@ export function ChatInterface() {
         content: data.response,
         model: data.model,
         latency: data.latency_ms,
+        tokens_per_second: data.tokens_per_second,
+        total_tokens: data.total_tokens,
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
@@ -265,33 +287,55 @@ export function ChatInterface() {
     }
   };
 
+  const getCurrentConversationTitle = () => {
+    if (activeConversationId) {
+      const conversation = conversations.find((c) => c.id === activeConversationId);
+      return conversation?.title || "New Conversation";
+    }
+    return "New Conversation";
+  };
+
   return (
-    <div className="h-full flex">
-      <ChatSidebar
-        conversations={conversations}
-        activeConversationId={activeConversationId}
-        onSelectConversation={loadConversation}
-        onNewConversation={createNewConversation}
-        onDeleteConversation={deleteConversation}
-      />
-      <Card className="flex-1 flex flex-col border-l-0 rounded-l-none">
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
-          <CardTitle className="text-2xl font-bold">
-            Universal Thought Protocol
-          </CardTitle>
-          <ModelSelector
-            models={availableModels}
-            currentModel={currentModel}
-            onModelChange={switchModel}
-            onDownloadModel={downloadModel}
-            onDeleteModel={deleteModel}
-          />
-        </CardHeader>
-        <CardContent className="flex-1 flex flex-col overflow-hidden">
-          <MessageList messages={messages} />
-          <ChatInput onSendMessage={sendMessage} isLoading={isLoading} />
-        </CardContent>
-      </Card>
+    <div className="h-full flex flex-col">
+      {/* Main App Header */}
+      <div className="border-b bg-card px-6 py-4">
+        <h1 className="text-3xl font-bold tracking-tight">
+          Universal Thought Protocol
+        </h1>
+      </div>
+
+      {/* Chat Area */}
+      <div className="flex-1 flex overflow-hidden w-full">
+        <ChatSidebar
+          conversations={conversations}
+          activeConversationId={activeConversationId}
+          onSelectConversation={loadConversation}
+          onNewConversation={createNewConversation}
+          onDeleteConversation={deleteConversation}
+        />
+        <Card className="flex-1 flex flex-col border-l-0 rounded-l-none border-t-0 min-w-0 overflow-hidden">
+          <CardHeader className="border-b">
+            <div className="flex items-center justify-between gap-4 min-w-0">
+              <CardTitle className="text-lg font-semibold truncate flex-shrink min-w-0">
+                {getCurrentConversationTitle()}
+              </CardTitle>
+              <div className="flex-shrink-0 min-w-[200px] max-w-[320px] w-auto">
+                <ModelSelector
+                  models={availableModels}
+                  currentModel={currentModel}
+                  onModelChange={switchModel}
+                  onDownloadModel={downloadModel}
+                  onDeleteModel={deleteModel}
+                />
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="flex-1 flex flex-col overflow-hidden p-0 min-w-0">
+            <MessageList messages={messages} />
+            <ChatInput onSendMessage={sendMessage} isLoading={isLoading} />
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

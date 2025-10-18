@@ -27,7 +27,7 @@ export function ChatInput({ onSendMessage, isLoading }: ChatInputProps) {
   };
 
   return (
-    <div className="flex gap-2">
+    <div className="flex gap-2 px-4 pb-4">
       <Input
         value={input}
         onChange={(e) => setInput(e.target.value)}
