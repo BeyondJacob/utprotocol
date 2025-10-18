@@ -39,9 +39,11 @@ struct GroqMessageContent {
 #[derive(Debug, Deserialize)]
 struct GroqUsage {
     #[serde(default)]
-    total_tokens: Option<u32>,
+    prompt_tokens: Option<u32>,
     #[serde(default)]
     completion_tokens: Option<u32>,
+    #[serde(default)]
+    total_tokens: Option<u32>,
 }
 
 pub struct GroqProvider {
@@ -106,6 +108,16 @@ impl ModelProvider for GroqProvider {
             .ok_or_else(|| anyhow!("Groq API returned no choices"))?;
 
         // Extract token information from usage
+        let prompt_tokens = groq_response
+            .usage
+            .as_ref()
+            .and_then(|u| u.prompt_tokens);
+
+        let completion_tokens = groq_response
+            .usage
+            .as_ref()
+            .and_then(|u| u.completion_tokens);
+
         let total_tokens = groq_response
             .usage
             .as_ref()
@@ -124,6 +136,8 @@ impl ModelProvider for GroqProvider {
         Ok(GenerateResponse {
             content,
             latency_ms,
+            prompt_tokens,
+            completion_tokens,
             total_tokens,
             tokens_per_second,
         })

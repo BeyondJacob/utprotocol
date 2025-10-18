@@ -15,7 +15,7 @@ mod db;
 mod providers;
 
 use db::{
-    models::{Conversation, ConversationWithMessages, CreateConversationRequest, Message},
+    models::{ConversationWithMessages, CreateConversationRequest},
     repository::{ConversationRepository, MessageRepository},
 };
 use providers::{
@@ -47,8 +47,16 @@ struct ChatResponse {
     response: String,
     model: String,
     latency_ms: u128,
+    prompt_tokens: Option<u32>,
+    completion_tokens: Option<u32>,
     tokens_per_second: Option<f64>,
     total_tokens: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+struct ModelPricingInfo {
+    input_per_million: f64,
+    output_per_million: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -58,6 +66,7 @@ struct ModelInfo {
     provider: String,
     is_local: bool,
     downloaded: bool,
+    pricing: Option<ModelPricingInfo>,
 }
 
 #[derive(Debug, Serialize)]
@@ -202,6 +211,10 @@ async fn models_handler(State(state): State<AppState>) -> impl IntoResponse {
                 provider: metadata.provider.as_str().to_string(),
                 is_local: metadata.is_local,
                 downloaded,
+                pricing: metadata.pricing.as_ref().map(|p| ModelPricingInfo {
+                    input_per_million: p.input_per_million,
+                    output_per_million: p.output_per_million,
+                }),
             }
         })
         .collect();
@@ -221,7 +234,7 @@ async fn chat_handler(
     if let Some(conversation_id) = payload.conversation_id {
         let message_repo = MessageRepository::new(state.db_pool.clone());
         message_repo
-            .create_message(conversation_id, "user", &payload.message, Some(&payload.model), None, None, None)
+            .create_message(conversation_id, "user", &payload.message, Some(&payload.model), None, None, None, None, None)
             .await
             .map_err(|e| {
                 (
@@ -284,6 +297,8 @@ async fn chat_handler(
                 &generate_response.content,
                 Some(&payload.model),
                 Some(latency_ms as i32),
+                generate_response.prompt_tokens.map(|t| t as i32),
+                generate_response.completion_tokens.map(|t| t as i32),
                 generate_response.tokens_per_second,
                 generate_response.total_tokens.map(|t| t as i32),
             )
@@ -300,6 +315,8 @@ async fn chat_handler(
         response: generate_response.content,
         model: payload.model,
         latency_ms,
+        prompt_tokens: generate_response.prompt_tokens,
+        completion_tokens: generate_response.completion_tokens,
         tokens_per_second: generate_response.tokens_per_second,
         total_tokens: generate_response.total_tokens,
     }))

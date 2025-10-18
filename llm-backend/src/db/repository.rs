@@ -103,14 +103,16 @@ impl MessageRepository {
         content: &str,
         model: Option<&str>,
         latency_ms: Option<i32>,
+        prompt_tokens: Option<i32>,
+        completion_tokens: Option<i32>,
         tokens_per_second: Option<f64>,
         total_tokens: Option<i32>,
     ) -> Result<Message> {
         let message = sqlx::query_as::<_, Message>(
             r#"
-            INSERT INTO messages (conversation_id, role, content, model, latency_ms, tokens_per_second, total_tokens, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-            RETURNING id, conversation_id, role, content, model, latency_ms, tokens_per_second, total_tokens, created_at
+            INSERT INTO messages (conversation_id, role, content, model, latency_ms, prompt_tokens, completion_tokens, tokens_per_second, total_tokens, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+            RETURNING id, conversation_id, role, content, model, latency_ms, prompt_tokens, completion_tokens, tokens_per_second, total_tokens, created_at
             "#,
         )
         .bind(conversation_id)
@@ -118,6 +120,8 @@ impl MessageRepository {
         .bind(content)
         .bind(model)
         .bind(latency_ms)
+        .bind(prompt_tokens)
+        .bind(completion_tokens)
         .bind(tokens_per_second)
         .bind(total_tokens)
         .fetch_one(&self.pool)
@@ -129,7 +133,7 @@ impl MessageRepository {
     pub async fn get_messages_by_conversation(&self, conversation_id: i32) -> Result<Vec<Message>> {
         let messages = sqlx::query_as::<_, Message>(
             r#"
-            SELECT id, conversation_id, role, content, model, latency_ms, tokens_per_second, total_tokens, created_at
+            SELECT id, conversation_id, role, content, model, latency_ms, prompt_tokens, completion_tokens, tokens_per_second, total_tokens, created_at
             FROM messages
             WHERE conversation_id = $1
             ORDER BY created_at ASC

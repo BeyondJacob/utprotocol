@@ -155,6 +155,8 @@ impl ModelProvider for OllamaProvider {
         Ok(GenerateResponse {
             content: ollama_response.response,
             latency_ms,
+            prompt_tokens: None,  // Ollama doesn't provide this separately
+            completion_tokens: None,  // Ollama doesn't provide this separately
             total_tokens,
             tokens_per_second,
         })
