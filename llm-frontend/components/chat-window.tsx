@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { MessageList } from "./message-list";
 import { ChatInput } from "./chat-input";
 import { ModelSelector } from "./model-selector";
@@ -14,6 +14,8 @@ export type Message = {
   content: string;
   model?: string;
   latency?: number;
+  prompt_tokens?: number;
+  completion_tokens?: number;
   tokens_per_second?: number;
   total_tokens?: number;
 };
@@ -25,9 +27,16 @@ type DbMessage = {
   content: string;
   model: string | null;
   latency_ms: number | null;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
   tokens_per_second: number | null;
   total_tokens: number | null;
   created_at: string;
+};
+
+export type ModelPricing = {
+  input_per_million: number;
+  output_per_million: number;
 };
 
 export type ModelInfo = {
@@ -36,7 +45,26 @@ export type ModelInfo = {
   provider: string;
   is_local: boolean;
   downloaded: boolean;
+  pricing?: ModelPricing;
 };
+
+// Utility function to calculate cost
+export function calculateCost(
+  tokens: number,
+  costPerMillion: number
+): number {
+  return (tokens / 1_000_000) * costPerMillion;
+}
+
+// Utility function to format cost
+export function formatCost(cost: number): string {
+  if (cost < 0.0001) {
+    return `$${cost.toFixed(6)}`;
+  } else if (cost < 0.01) {
+    return `$${cost.toFixed(4)}`;
+  }
+  return `$${cost.toFixed(2)}`;
+}
 
 interface ChatWindowProps {
   windowId: string;
@@ -82,6 +110,8 @@ export function ChatWindow({
         content: msg.content,
         model: msg.model ?? undefined,
         latency: msg.latency_ms ?? undefined,
+        prompt_tokens: msg.prompt_tokens ?? undefined,
+        completion_tokens: msg.completion_tokens ?? undefined,
         tokens_per_second: msg.tokens_per_second ?? undefined,
         total_tokens: msg.total_tokens ?? undefined,
       }));
@@ -160,6 +190,8 @@ export function ChatWindow({
         content: data.response,
         model: data.model,
         latency: data.latency_ms,
+        prompt_tokens: data.prompt_tokens,
+        completion_tokens: data.completion_tokens,
         tokens_per_second: data.tokens_per_second,
         total_tokens: data.total_tokens,
       };
@@ -227,15 +259,60 @@ export function ChatWindow({
     }
   };
 
+  // Calculate running totals for cloud models
+  const runningTotals = useMemo(() => {
+    const currentModelInfo = availableModels.find(m => m.name === currentModel);
+
+    // Only show running totals for cloud models with pricing
+    if (!currentModelInfo || currentModelInfo.is_local || !currentModelInfo.pricing) {
+      return null;
+    }
+
+    let totalPromptTokens = 0;
+    let totalCompletionTokens = 0;
+    let totalInputCost = 0;
+    let totalOutputCost = 0;
+
+    messages.forEach(msg => {
+      // Only count messages from the current model
+      if (msg.model === currentModel && currentModelInfo.pricing) {
+        if (msg.prompt_tokens) {
+          totalPromptTokens += msg.prompt_tokens;
+          totalInputCost += calculateCost(msg.prompt_tokens, currentModelInfo.pricing.input_per_million);
+        }
+        if (msg.completion_tokens) {
+          totalCompletionTokens += msg.completion_tokens;
+          totalOutputCost += calculateCost(msg.completion_tokens, currentModelInfo.pricing.output_per_million);
+        }
+      }
+    });
+
+    const totalCost = totalInputCost + totalOutputCost;
+
+    // Only return if there are any tokens
+    if (totalPromptTokens === 0 && totalCompletionTokens === 0) {
+      return null;
+    }
+
+    return {
+      promptTokens: totalPromptTokens,
+      completionTokens: totalCompletionTokens,
+      inputCost: totalInputCost,
+      outputCost: totalOutputCost,
+      totalCost,
+    };
+  }, [messages, currentModel, availableModels]);
+
   return (
     <Card className="flex-1 flex flex-col border min-w-0 overflow-hidden h-full shadow-lg">
       <CardHeader className="border-b px-3 py-2 md:px-4 md:py-3 bg-muted/20">
-        <div className="flex items-center justify-between gap-2 min-w-0">
-          <CardTitle className="text-xs md:text-sm font-semibold truncate flex-1 min-w-0">
-            {conversationTitle}
-          </CardTitle>
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-2 min-w-0">
+            <CardTitle className="text-xs md:text-sm font-semibold truncate flex-1 min-w-0">
+              {conversationTitle}
+            </CardTitle>
 
-          <div className="flex items-center gap-1 flex-shrink-0">
+            <div className="flex items-center gap-1 flex-shrink-0">
             <div className="min-w-[120px] sm:min-w-[140px] md:min-w-[160px] max-w-[180px]">
               <ModelSelector
                 models={availableModels}
@@ -273,10 +350,32 @@ export function ChatWindow({
             </Button>
           </div>
         </div>
+
+        {/* Running totals for cloud models */}
+        {runningTotals && (
+          <div className="pt-2 border-t border-muted-foreground/10">
+            <div className="text-[10px] sm:text-xs text-muted-foreground flex items-center gap-1.5 sm:gap-2 flex-wrap">
+              <span className="whitespace-nowrap">
+                In: {runningTotals.promptTokens.toLocaleString()} tok
+                <span className="ml-1 opacity-80">({formatCost(runningTotals.inputCost)})</span>
+              </span>
+              <span>•</span>
+              <span className="whitespace-nowrap">
+                Out: {runningTotals.completionTokens.toLocaleString()} tok
+                <span className="ml-1 opacity-80">({formatCost(runningTotals.outputCost)})</span>
+              </span>
+              <span>•</span>
+              <span className="whitespace-nowrap font-medium">
+                Total: {formatCost(runningTotals.totalCost)}
+              </span>
+            </div>
+          </div>
+        )}
+        </div>
       </CardHeader>
 
       <CardContent className="flex-1 flex flex-col overflow-hidden p-0 min-w-0">
-        <MessageList messages={messages} />
+        <MessageList messages={messages} availableModels={availableModels} />
         <ChatInput onSendMessage={sendMessage} isLoading={isLoading} />
       </CardContent>
     </Card>

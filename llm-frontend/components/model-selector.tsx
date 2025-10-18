@@ -73,12 +73,19 @@ export function ModelSelector({
             value={model.name}
             className="group relative cursor-pointer [&>span:first-child]:hidden text-xs sm:text-sm"
           >
-            <div className="flex items-center justify-between w-full pr-8">
-              <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
-                <ProviderIcon provider={model.provider} isLocal={model.is_local} />
-                <span className="font-medium truncate">{model.display_name}</span>
+            <div className="flex flex-col gap-0.5 w-full pr-8">
+              <div className="flex items-center justify-between w-full">
+                <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+                  <ProviderIcon provider={model.provider} isLocal={model.is_local} />
+                  <span className="font-medium truncate">{model.display_name}</span>
+                </div>
               </div>
-              <div className="absolute right-2 flex items-center gap-1 z-10">
+              {model.pricing && (
+                <div className="text-[10px] text-muted-foreground ml-5 sm:ml-6">
+                  ${model.pricing.input_per_million}/M in • ${model.pricing.output_per_million}/M out
+                </div>
+              )}
+              <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 z-10">
                 {model.is_local ? (
                   model.downloaded ? (
                     <button
