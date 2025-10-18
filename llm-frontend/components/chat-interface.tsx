@@ -6,6 +6,9 @@ import { ChatInput } from "./chat-input";
 import { ModelSelector } from "./model-selector";
 import { ChatSidebar, type Conversation } from "./chat-sidebar";
 import { Card, CardHeader, CardTitle, CardContent } from "./ui/card";
+import { Button } from "./ui/button";
+import { Sheet, SheetContent, SheetTrigger } from "./ui/sheet";
+import { Menu } from "lucide-react";
 
 export type Message = {
   id: string;
@@ -13,10 +16,27 @@ export type Message = {
   content: string;
   model?: string;
   latency?: number;
+  tokens_per_second?: number;
+  total_tokens?: number;
+};
+
+type DbMessage = {
+  id: number;
+  conversation_id: number;
+  role: string;
+  content: string;
+  model: string | null;
+  latency_ms: number | null;
+  tokens_per_second: number | null;
+  total_tokens: number | null;
+  created_at: string;
 };
 
 export type ModelInfo = {
   name: string;
+  display_name: string;
+  provider: string;
+  is_local: boolean;
   downloaded: boolean;
 };
 
@@ -29,6 +49,7 @@ export function ChatInterface() {
   const [activeConversationId, setActiveConversationId] = useState<
     number | null
   >(null);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   // Fetch available models and conversations on mount
   useEffect(() => {
@@ -64,16 +85,20 @@ export function ChatInterface() {
       );
       const data = await response.json();
 
-      const loadedMessages: Message[] = data.messages.map((msg: any) => ({
+      const loadedMessages: Message[] = data.messages.map((msg: DbMessage) => ({
         id: msg.id.toString(),
-        role: msg.role,
+        role: msg.role as "user" | "assistant",
         content: msg.content,
-        latency: msg.latency_ms,
+        model: msg.model ?? undefined,
+        latency: msg.latency_ms ?? undefined,
+        tokens_per_second: msg.tokens_per_second ?? undefined,
+        total_tokens: msg.total_tokens ?? undefined,
       }));
 
       setMessages(loadedMessages);
       setActiveConversationId(id);
       setCurrentModel(data.conversation.model);
+      setIsSidebarOpen(false); // Close sidebar on mobile after selection
     } catch (error) {
       console.error("Failed to load conversation:", error);
     }
@@ -96,6 +121,7 @@ export function ChatInterface() {
       setConversations([newConversation, ...conversations]);
       setActiveConversationId(newConversation.id);
       setMessages([]);
+      setIsSidebarOpen(false); // Close sidebar on mobile
     } catch (error) {
       console.error("Failed to create conversation:", error);
     }
@@ -193,6 +219,8 @@ export function ChatInterface() {
         content: data.response,
         model: data.model,
         latency: data.latency_ms,
+        tokens_per_second: data.tokens_per_second,
+        total_tokens: data.total_tokens,
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
@@ -265,33 +293,80 @@ export function ChatInterface() {
     }
   };
 
+  const getCurrentConversationTitle = () => {
+    if (activeConversationId) {
+      const conversation = conversations.find((c) => c.id === activeConversationId);
+      return conversation?.title || "New Conversation";
+    }
+    return "New Conversation";
+  };
+
+  const SidebarContent = () => (
+    <ChatSidebar
+      conversations={conversations}
+      activeConversationId={activeConversationId}
+      onSelectConversation={loadConversation}
+      onNewConversation={createNewConversation}
+      onDeleteConversation={deleteConversation}
+    />
+  );
+
   return (
-    <div className="h-full flex">
-      <ChatSidebar
-        conversations={conversations}
-        activeConversationId={activeConversationId}
-        onSelectConversation={loadConversation}
-        onNewConversation={createNewConversation}
-        onDeleteConversation={deleteConversation}
-      />
-      <Card className="flex-1 flex flex-col border-l-0 rounded-l-none">
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
-          <CardTitle className="text-2xl font-bold">
+    <div className="h-full flex flex-col">
+      {/* Main App Header */}
+      <div className="border-b bg-card px-3 py-3 md:px-6 md:py-4">
+        <div className="flex items-center gap-3">
+          {/* Mobile Menu Button */}
+          <Sheet open={isSidebarOpen} onOpenChange={setIsSidebarOpen}>
+            <SheetTrigger asChild>
+              <Button variant="ghost" size="icon" className="lg:hidden flex-shrink-0">
+                <Menu className="h-5 w-5" />
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="left" className="p-0 w-[280px] sm:w-[320px] gap-0">
+              <div className="h-full pt-12">
+                <SidebarContent />
+              </div>
+            </SheetContent>
+          </Sheet>
+
+          <h1 className="text-xl md:text-2xl lg:text-3xl font-bold tracking-tight truncate">
             Universal Thought Protocol
-          </CardTitle>
-          <ModelSelector
-            models={availableModels}
-            currentModel={currentModel}
-            onModelChange={switchModel}
-            onDownloadModel={downloadModel}
-            onDeleteModel={deleteModel}
-          />
-        </CardHeader>
-        <CardContent className="flex-1 flex flex-col overflow-hidden">
-          <MessageList messages={messages} />
-          <ChatInput onSendMessage={sendMessage} isLoading={isLoading} />
-        </CardContent>
-      </Card>
+          </h1>
+        </div>
+      </div>
+
+      {/* Chat Area */}
+      <div className="flex-1 flex overflow-hidden w-full">
+        {/* Desktop Sidebar */}
+        <div className="hidden lg:block">
+          <SidebarContent />
+        </div>
+
+        {/* Main Chat Area */}
+        <Card className="flex-1 flex flex-col border-l-0 rounded-l-none border-t-0 border-r-0 border-b-0 min-w-0 overflow-hidden">
+          <CardHeader className="border-b px-3 py-3 md:px-4 md:py-4 lg:px-6 lg:py-4">
+            <div className="flex items-center justify-between gap-2 md:gap-4 min-w-0">
+              <CardTitle className="text-sm md:text-base lg:text-lg font-semibold truncate flex-shrink min-w-0">
+                {getCurrentConversationTitle()}
+              </CardTitle>
+              <div className="flex-shrink-0 min-w-[140px] sm:min-w-[180px] md:min-w-[200px] max-w-[220px] sm:max-w-[280px] md:max-w-[320px] w-auto">
+                <ModelSelector
+                  models={availableModels}
+                  currentModel={currentModel}
+                  onModelChange={switchModel}
+                  onDownloadModel={downloadModel}
+                  onDeleteModel={deleteModel}
+                />
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="flex-1 flex flex-col overflow-hidden p-0 min-w-0">
+            <MessageList messages={messages} />
+            <ChatInput onSendMessage={sendMessage} isLoading={isLoading} />
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

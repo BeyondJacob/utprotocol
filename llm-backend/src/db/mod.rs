@@ -36,6 +36,20 @@ pub async fn init_db(database_url: &str) -> Result<PgPool> {
     .execute(&pool)
     .await?;
 
+    // Add new columns if they don't exist (for existing databases)
+    sqlx::query(
+        r#"
+        ALTER TABLE messages
+        ADD COLUMN IF NOT EXISTS tokens_per_second DOUBLE PRECISION,
+        ADD COLUMN IF NOT EXISTS total_tokens INTEGER,
+        ADD COLUMN IF NOT EXISTS model TEXT,
+        ADD COLUMN IF NOT EXISTS prompt_tokens INTEGER,
+        ADD COLUMN IF NOT EXISTS completion_tokens INTEGER
+        "#,
+    )
+    .execute(&pool)
+    .await?;
+
     // Create index for faster queries
     sqlx::query(
         r#"

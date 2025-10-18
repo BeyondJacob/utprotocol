@@ -3,6 +3,7 @@
 # Colors for output
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
+RED='\033[0;31m'
 NC='\033[0m' # No Color
 
 echo -e "${BLUE}Starting UT Protocol...${NC}"
@@ -22,6 +23,12 @@ cleanup() {
 }
 
 trap cleanup INT TERM
+
+# Kill any existing processes on ports 3000 and 3001
+echo -e "${BLUE}Checking for existing processes...${NC}"
+lsof -ti:3001 | xargs kill -9 2>/dev/null && echo -e "${GREEN}Killed process on port 3001${NC}" || true
+lsof -ti:3000 | xargs kill -9 2>/dev/null && echo -e "${GREEN}Killed process on port 3000${NC}" || true
+sleep 1
 
 # Start backend
 echo -e "${GREEN}Starting backend on http://127.0.0.1:3001${NC}"
