@@ -23,8 +23,8 @@ export function MessageList({ messages }: { messages: Message[] }) {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto mb-4 px-4 min-w-0">
-      <div className="space-y-4 py-2 max-w-full">
+    <div className="flex-1 overflow-y-auto mb-2 md:mb-4 px-2 sm:px-3 md:px-4 min-w-0">
+      <div className="space-y-3 md:space-y-4 py-2 max-w-full">
         {messages.map((message) => (
           <div
             key={message.id}
@@ -33,42 +33,42 @@ export function MessageList({ messages }: { messages: Message[] }) {
             }`}
           >
             <Card
-              className={`max-w-[85%] p-4 break-words ${
+              className={`max-w-[92%] sm:max-w-[88%] md:max-w-[85%] p-3 md:p-4 break-words ${
                 message.role === "user"
                   ? "bg-primary text-primary-foreground"
                   : "bg-muted"
               }`}
             >
               <div className="space-y-2">
-                <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                <p className="text-sm md:text-base whitespace-pre-wrap break-words">{message.content}</p>
                 {message.role === "assistant" && (message.model || message.latency) && (
-                  <div className="text-xs pt-2 border-t border-muted-foreground/20 text-muted-foreground/70">
-                    <div className="flex items-center gap-3 flex-wrap">
-                      {message.model && <span className="font-medium">{message.model}</span>}
+                  <div className="text-[10px] sm:text-xs pt-2 border-t border-muted-foreground/20 text-muted-foreground/70">
+                    <div className="flex items-center gap-1.5 sm:gap-2 md:gap-3 flex-wrap">
+                      {message.model && <span className="font-medium truncate max-w-[120px] sm:max-w-none">{message.model}</span>}
                       {message.latency && (
                         <>
-                          {message.model && <span>•</span>}
-                          <span>{message.latency}ms</span>
+                          {message.model && <span className="hidden sm:inline">•</span>}
+                          <span className="whitespace-nowrap">{message.latency}ms</span>
                         </>
                       )}
                       {message.tokens_per_second && (
                         <>
-                          <span>•</span>
-                          <span>{message.tokens_per_second.toFixed(1)} tokens/s</span>
+                          <span className="hidden sm:inline">•</span>
+                          <span className="whitespace-nowrap">{message.tokens_per_second.toFixed(1)} tok/s</span>
                         </>
                       )}
                       {message.total_tokens && (
                         <>
-                          <span>•</span>
-                          <span>{message.total_tokens} tokens</span>
+                          <span className="hidden sm:inline">•</span>
+                          <span className="whitespace-nowrap">{message.total_tokens} tok</span>
                         </>
                       )}
                     </div>
                   </div>
                 )}
                 {message.role === "user" && message.model && (
-                  <div className="text-xs pt-2 border-t border-primary-foreground/20 opacity-70">
-                    <span className="font-medium">Sent to: {message.model}</span>
+                  <div className="text-[10px] sm:text-xs pt-2 border-t border-primary-foreground/20 opacity-70">
+                    <span className="font-medium truncate max-w-full inline-block">Sent to: {message.model}</span>
                   </div>
                 )}
               </div>

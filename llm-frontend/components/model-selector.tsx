@@ -53,62 +53,62 @@ export function ModelSelector({
 
   return (
     <Select value={currentModel} onValueChange={onModelChange}>
-      <SelectTrigger className="w-full max-w-[320px] min-w-[200px]">
+      <SelectTrigger className="w-full text-xs sm:text-sm">
         <SelectValue placeholder="Select a model">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2">
             {models.find((m) => m.name === currentModel) && (
               <ProviderIcon
                 provider={models.find((m) => m.name === currentModel)!.provider}
                 isLocal={models.find((m) => m.name === currentModel)!.is_local}
               />
             )}
-            <span>{getCurrentModelDisplayName()}</span>
+            <span className="truncate">{getCurrentModelDisplayName()}</span>
           </div>
         </SelectValue>
       </SelectTrigger>
-      <SelectContent>
+      <SelectContent className="max-w-[90vw] sm:max-w-none">
         {models.map((model) => (
           <SelectItem
             key={model.name}
             value={model.name}
-            className="group relative cursor-pointer [&>span:first-child]:hidden"
+            className="group relative cursor-pointer [&>span:first-child]:hidden text-xs sm:text-sm"
           >
             <div className="flex items-center justify-between w-full pr-8">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
                 <ProviderIcon provider={model.provider} isLocal={model.is_local} />
-                <span className="font-medium">{model.display_name}</span>
+                <span className="font-medium truncate">{model.display_name}</span>
               </div>
               <div className="absolute right-2 flex items-center gap-1 z-10">
                 {model.is_local ? (
                   model.downloaded ? (
                     <button
-                      className="p-1 rounded hover:bg-accent transition-colors"
+                      className="p-0.5 sm:p-1 rounded hover:bg-accent transition-colors"
                       onClick={(e) => {
                         e.stopPropagation();
                         onDeleteModel(model.name);
                       }}
                       title="Delete model"
                     >
-                      <Check className="h-4 w-4 text-green-500 group-hover:hidden" />
-                      <Trash2 className="h-4 w-4 text-red-500 hidden group-hover:block" />
+                      <Check className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-green-500 group-hover:hidden" />
+                      <Trash2 className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-red-500 hidden group-hover:block" />
                     </button>
                   ) : (
                     <button
-                      className="p-1 rounded hover:bg-accent transition-colors"
+                      className="p-0.5 sm:p-1 rounded hover:bg-accent transition-colors"
                       onClick={(e) => {
                         e.stopPropagation();
                         onDownloadModel(model.name);
                       }}
                       title="Download model"
                     >
-                      <X className="h-4 w-4 text-red-500 group-hover:hidden" />
-                      <Download className="h-4 w-4 text-blue-500 hidden group-hover:block" />
+                      <X className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-red-500 group-hover:hidden" />
+                      <Download className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-blue-500 hidden group-hover:block" />
                     </button>
                   )
                 ) : (
                   // Cloud models show checkmark if API is configured
                   model.downloaded && (
-                    <Check className="h-4 w-4 text-green-500" />
+                    <Check className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-green-500" />
                   )
                 )}
               </div>

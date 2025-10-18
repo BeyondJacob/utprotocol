@@ -6,6 +6,9 @@ import { ChatInput } from "./chat-input";
 import { ModelSelector } from "./model-selector";
 import { ChatSidebar, type Conversation } from "./chat-sidebar";
 import { Card, CardHeader, CardTitle, CardContent } from "./ui/card";
+import { Button } from "./ui/button";
+import { Sheet, SheetContent, SheetTrigger } from "./ui/sheet";
+import { Menu } from "lucide-react";
 
 export type Message = {
   id: string;
@@ -46,6 +49,7 @@ export function ChatInterface() {
   const [activeConversationId, setActiveConversationId] = useState<
     number | null
   >(null);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   // Fetch available models and conversations on mount
   useEffect(() => {
@@ -94,6 +98,7 @@ export function ChatInterface() {
       setMessages(loadedMessages);
       setActiveConversationId(id);
       setCurrentModel(data.conversation.model);
+      setIsSidebarOpen(false); // Close sidebar on mobile after selection
     } catch (error) {
       console.error("Failed to load conversation:", error);
     }
@@ -116,6 +121,7 @@ export function ChatInterface() {
       setConversations([newConversation, ...conversations]);
       setActiveConversationId(newConversation.id);
       setMessages([]);
+      setIsSidebarOpen(false); // Close sidebar on mobile
     } catch (error) {
       console.error("Failed to create conversation:", error);
     }
@@ -295,31 +301,56 @@ export function ChatInterface() {
     return "New Conversation";
   };
 
+  const SidebarContent = () => (
+    <ChatSidebar
+      conversations={conversations}
+      activeConversationId={activeConversationId}
+      onSelectConversation={loadConversation}
+      onNewConversation={createNewConversation}
+      onDeleteConversation={deleteConversation}
+    />
+  );
+
   return (
     <div className="h-full flex flex-col">
       {/* Main App Header */}
-      <div className="border-b bg-card px-6 py-4">
-        <h1 className="text-3xl font-bold tracking-tight">
-          Universal Thought Protocol
-        </h1>
+      <div className="border-b bg-card px-3 py-3 md:px-6 md:py-4">
+        <div className="flex items-center gap-3">
+          {/* Mobile Menu Button */}
+          <Sheet open={isSidebarOpen} onOpenChange={setIsSidebarOpen}>
+            <SheetTrigger asChild>
+              <Button variant="ghost" size="icon" className="lg:hidden flex-shrink-0">
+                <Menu className="h-5 w-5" />
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="left" className="p-0 w-[280px] sm:w-[320px] gap-0">
+              <div className="h-full pt-12">
+                <SidebarContent />
+              </div>
+            </SheetContent>
+          </Sheet>
+
+          <h1 className="text-xl md:text-2xl lg:text-3xl font-bold tracking-tight truncate">
+            Universal Thought Protocol
+          </h1>
+        </div>
       </div>
 
       {/* Chat Area */}
       <div className="flex-1 flex overflow-hidden w-full">
-        <ChatSidebar
-          conversations={conversations}
-          activeConversationId={activeConversationId}
-          onSelectConversation={loadConversation}
-          onNewConversation={createNewConversation}
-          onDeleteConversation={deleteConversation}
-        />
-        <Card className="flex-1 flex flex-col border-l-0 rounded-l-none border-t-0 min-w-0 overflow-hidden">
-          <CardHeader className="border-b">
-            <div className="flex items-center justify-between gap-4 min-w-0">
-              <CardTitle className="text-lg font-semibold truncate flex-shrink min-w-0">
+        {/* Desktop Sidebar */}
+        <div className="hidden lg:block">
+          <SidebarContent />
+        </div>
+
+        {/* Main Chat Area */}
+        <Card className="flex-1 flex flex-col border-l-0 rounded-l-none border-t-0 border-r-0 border-b-0 min-w-0 overflow-hidden">
+          <CardHeader className="border-b px-3 py-3 md:px-4 md:py-4 lg:px-6 lg:py-4">
+            <div className="flex items-center justify-between gap-2 md:gap-4 min-w-0">
+              <CardTitle className="text-sm md:text-base lg:text-lg font-semibold truncate flex-shrink min-w-0">
                 {getCurrentConversationTitle()}
               </CardTitle>
-              <div className="flex-shrink-0 min-w-[200px] max-w-[320px] w-auto">
+              <div className="flex-shrink-0 min-w-[140px] sm:min-w-[180px] md:min-w-[200px] max-w-[220px] sm:max-w-[280px] md:max-w-[320px] w-auto">
                 <ModelSelector
                   models={availableModels}
                   currentModel={currentModel}

@@ -27,17 +27,22 @@ export function ChatInput({ onSendMessage, isLoading }: ChatInputProps) {
   };
 
   return (
-    <div className="flex gap-2 px-4 pb-4">
+    <div className="flex gap-2 px-2 sm:px-3 md:px-4 pb-2 sm:pb-3 md:pb-4">
       <Input
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={handleKeyDown}
         placeholder="Type your message..."
         disabled={isLoading}
-        className="flex-1"
+        className="flex-1 text-sm md:text-base"
       />
-      <Button onClick={handleSend} disabled={isLoading || !input.trim()}>
-        {isLoading ? "Sending..." : "Send"}
+      <Button
+        onClick={handleSend}
+        disabled={isLoading || !input.trim()}
+        className="px-3 sm:px-4 text-sm md:text-base"
+      >
+        {isLoading ? <span className="hidden sm:inline">Sending...</span> : <span className="hidden sm:inline">Send</span>}
+        <span className="sm:hidden">{isLoading ? "..." : "→"}</span>
       </Button>
     </div>
   );

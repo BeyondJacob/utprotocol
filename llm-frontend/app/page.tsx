@@ -1,9 +1,9 @@
-import { ChatInterface } from "@/components/chat-interface";
+import { MultiChatInterface } from "@/components/multi-chat-interface";
 
 export default function Home() {
   return (
     <main className="h-screen w-full overflow-hidden">
-      <ChatInterface />
+      <MultiChatInterface />
     </main>
   );
 }

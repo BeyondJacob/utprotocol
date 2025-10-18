@@ -74,12 +74,12 @@ export function ChatSidebar({
   const groupedConversations = groupConversations();
 
   return (
-    <div className="w-72 flex-shrink-0 border-r bg-background flex flex-col h-full">
+    <div className="w-full lg:w-72 flex-shrink-0 border-r bg-background flex flex-col h-full">
       {/* Header */}
-      <div className="p-3 border-b bg-muted/20">
+      <div className="p-2.5 sm:p-3 border-b bg-muted/20">
         <Button
           onClick={onNewConversation}
-          className="w-full justify-start gap-2 h-10 font-medium shadow-sm hover:shadow-md transition-all"
+          className="w-full justify-start gap-2 h-9 sm:h-10 font-medium shadow-sm hover:shadow-md transition-all text-sm"
           size="default"
         >
           <Plus className="h-4 w-4" />
@@ -109,14 +109,14 @@ export function ChatSidebar({
               return (
                 <div key={group} className="mb-4">
                   {/* Group Header */}
-                  <div className="px-4 py-2 mb-1">
-                    <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  <div className="px-3 sm:px-4 py-1.5 sm:py-2 mb-1">
+                    <h3 className="text-[10px] sm:text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                       {group}
                     </h3>
                   </div>
 
                   {/* Group Items */}
-                  <div className="space-y-0.5 px-2">
+                  <div className="space-y-0.5 px-1.5 sm:px-2">
                     {convs.map((conversation) => {
                       const isActive = activeConversationId === conversation.id;
 
@@ -125,7 +125,7 @@ export function ChatSidebar({
                           key={conversation.id}
                           onClick={() => onSelectConversation(conversation.id)}
                           className={`
-                            group relative flex items-start gap-3 p-3 rounded-lg cursor-pointer
+                            group relative flex items-start gap-2 sm:gap-3 p-2 sm:p-3 rounded-lg cursor-pointer
                             transition-all duration-200
                             ${
                               isActive
@@ -139,19 +139,19 @@ export function ChatSidebar({
                             flex-shrink-0 mt-0.5
                             ${isActive ? "text-primary" : "text-muted-foreground"}
                           `}>
-                            <MessageSquare className="h-4 w-4" />
+                            <MessageSquare className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                           </div>
 
                           {/* Content */}
                           <div className="flex-1 min-w-0 overflow-hidden">
                             <p className={`
-                              text-sm font-medium truncate leading-tight mb-1
+                              text-xs sm:text-sm font-medium truncate leading-tight mb-0.5 sm:mb-1
                               ${isActive ? "text-foreground" : "text-foreground/90"}
                             `}>
                               {conversation.title}
                             </p>
-                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                              <Clock className="h-3 w-3" />
+                            <div className="flex items-center gap-1 sm:gap-2 text-[10px] sm:text-xs text-muted-foreground">
+                              <Clock className="h-2.5 w-2.5 sm:h-3 sm:w-3" />
                               <span>{formatDate(conversation.updated_at)}</span>
                             </div>
                           </div>
@@ -161,7 +161,7 @@ export function ChatSidebar({
                             variant="ghost"
                             size="icon"
                             className={`
-                              absolute right-2 top-2 h-7 w-7
+                              absolute right-1 sm:right-2 top-1 sm:top-2 h-6 w-6 sm:h-7 sm:w-7
                               opacity-0 group-hover:opacity-100
                               transition-opacity duration-200
                               hover:bg-destructive/10 hover:text-destructive
@@ -172,7 +172,7 @@ export function ChatSidebar({
                               onDeleteConversation(conversation.id);
                             }}
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
+                            <Trash2 className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
                           </Button>
                         </div>
                       );
