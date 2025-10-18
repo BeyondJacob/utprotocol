@@ -101,19 +101,25 @@ impl MessageRepository {
         conversation_id: i32,
         role: &str,
         content: &str,
+        model: Option<&str>,
         latency_ms: Option<i32>,
+        tokens_per_second: Option<f64>,
+        total_tokens: Option<i32>,
     ) -> Result<Message> {
         let message = sqlx::query_as::<_, Message>(
             r#"
-            INSERT INTO messages (conversation_id, role, content, latency_ms, created_at)
-            VALUES ($1, $2, $3, $4, NOW())
-            RETURNING id, conversation_id, role, content, latency_ms, created_at
+            INSERT INTO messages (conversation_id, role, content, model, latency_ms, tokens_per_second, total_tokens, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+            RETURNING id, conversation_id, role, content, model, latency_ms, tokens_per_second, total_tokens, created_at
             "#,
         )
         .bind(conversation_id)
         .bind(role)
         .bind(content)
+        .bind(model)
         .bind(latency_ms)
+        .bind(tokens_per_second)
+        .bind(total_tokens)
         .fetch_one(&self.pool)
         .await?;
 
@@ -123,7 +129,7 @@ impl MessageRepository {
     pub async fn get_messages_by_conversation(&self, conversation_id: i32) -> Result<Vec<Message>> {
         let messages = sqlx::query_as::<_, Message>(
             r#"
-            SELECT id, conversation_id, role, content, latency_ms, created_at
+            SELECT id, conversation_id, role, content, model, latency_ms, tokens_per_second, total_tokens, created_at
             FROM messages
             WHERE conversation_id = $1
             ORDER BY created_at ASC

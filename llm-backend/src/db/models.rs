@@ -16,7 +16,10 @@ pub struct Message {
     pub conversation_id: i32,
     pub role: String,
     pub content: String,
+    pub model: Option<String>,
     pub latency_ms: Option<i32>,
+    pub tokens_per_second: Option<f64>,
+    pub total_tokens: Option<i32>,
     pub created_at: DateTime<Utc>,
 }
 

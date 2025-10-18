@@ -12,16 +12,25 @@ use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 
 mod db;
+mod providers;
+
 use db::{
     models::{Conversation, ConversationWithMessages, CreateConversationRequest, Message},
     repository::{ConversationRepository, MessageRepository},
+};
+use providers::{
+    groq::GroqProvider,
+    ollama::OllamaProvider,
+    ModelProvider, ModelRegistry, ProviderType,
 };
 
 // Shared application state
 #[derive(Clone)]
 struct AppState {
     active_model: Arc<RwLock<String>>,
-    ollama_client: reqwest::Client,
+    ollama_provider: Arc<OllamaProvider>,
+    groq_provider: Arc<GroqProvider>,
+    model_registry: Arc<ModelRegistry>,
     db_pool: PgPool,
 }
 
@@ -38,11 +47,16 @@ struct ChatResponse {
     response: String,
     model: String,
     latency_ms: u128,
+    tokens_per_second: Option<f64>,
+    total_tokens: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
 struct ModelInfo {
     name: String,
+    display_name: String,
+    provider: String,
+    is_local: bool,
     downloaded: bool,
 }
 
@@ -62,40 +76,6 @@ struct ModelActionRequest {
     model: String,
 }
 
-#[derive(Debug, Serialize)]
-struct HealthResponse {
-    status: String,
-    ollama_connected: bool,
-}
-
-// Ollama API types
-#[derive(Debug, Serialize)]
-struct OllamaGenerateRequest {
-    model: String,
-    prompt: String,
-    stream: bool,
-}
-
-#[derive(Debug, Deserialize)]
-struct OllamaGenerateResponse {
-    response: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct OllamaModel {
-    name: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct OllamaListResponse {
-    models: Vec<OllamaModel>,
-}
-
-#[derive(Debug, Serialize)]
-struct OllamaPullRequest {
-    name: String,
-    stream: bool,
-}
 
 #[tokio::main]
 async fn main() {
@@ -112,10 +92,34 @@ async fn main() {
 
     println!("✅ Database connected and initialized");
 
+    // Initialize HTTP client
+    let http_client = reqwest::Client::new();
+
+    // Initialize providers
+    let groq_api_key = std::env::var("GROQ_API_KEY").ok();
+    let ollama_provider = Arc::new(OllamaProvider::new(http_client.clone()));
+    let groq_provider = Arc::new(GroqProvider::new(http_client.clone(), groq_api_key.clone()));
+    let model_registry = Arc::new(ModelRegistry::new());
+
+    // Check provider status
+    if ollama_provider.is_connected().await {
+        println!("✅ Ollama provider connected");
+    } else {
+        println!("⚠️  Ollama provider not connected");
+    }
+
+    if groq_provider.is_connected().await {
+        println!("✅ Groq provider configured");
+    } else {
+        println!("⚠️  Groq provider not configured (GROQ_API_KEY missing)");
+    }
+
     // Initialize state
     let state = AppState {
         active_model: Arc::new(RwLock::new("gpt-oss:20b".to_string())),
-        ollama_client: reqwest::Client::new(),
+        ollama_provider,
+        groq_provider,
+        model_registry,
         db_pool,
     };
 
@@ -153,63 +157,52 @@ async fn main() {
 
 // Health check handler
 async fn health_handler(State(state): State<AppState>) -> impl IntoResponse {
-    // Check if Ollama is accessible
-    let ollama_connected = state
-        .ollama_client
-        .get("http://localhost:11434/api/tags")
-        .send()
-        .await
-        .is_ok();
+    let ollama_connected = state.ollama_provider.is_connected().await;
+    let groq_connected = state.groq_provider.is_connected().await;
 
-    Json(HealthResponse {
-        status: "ok".to_string(),
-        ollama_connected,
-    })
+    Json(serde_json::json!({
+        "status": "ok",
+        "providers": {
+            "ollama": ollama_connected,
+            "groq": groq_connected,
+        }
+    }))
 }
 
 // List available models handler
 async fn models_handler(State(state): State<AppState>) -> impl IntoResponse {
     let active_model = state.active_model.read().await.clone();
 
-    // Get list of downloaded models from Ollama
-    let downloaded_models = match state
-        .ollama_client
-        .get("http://localhost:11434/api/tags")
-        .send()
+    // Get list of downloaded Ollama models
+    let downloaded_models = state
+        .ollama_provider
+        .list_models()
         .await
-    {
-        Ok(response) => {
-            if response.status().is_success() {
-                response
-                    .json::<OllamaListResponse>()
-                    .await
-                    .map(|list| {
-                        list.models
-                            .into_iter()
-                            .map(|m| m.name)
-                            .collect::<Vec<String>>()
-                    })
-                    .unwrap_or_else(|_| vec![])
+        .unwrap_or_else(|_| vec![]);
+
+    // Build model list from registry
+    let models: Vec<ModelInfo> = state
+        .model_registry
+        .all_models()
+        .iter()
+        .map(|metadata| {
+            let downloaded = if metadata.is_local {
+                downloaded_models.contains(&metadata.name)
             } else {
-                vec![]
+                // Cloud models are always "available" if provider is configured
+                match metadata.provider {
+                    ProviderType::Groq => state.groq_provider.is_configured(),
+                    ProviderType::Ollama => true,
+                }
+            };
+
+            ModelInfo {
+                name: metadata.name.clone(),
+                display_name: metadata.display_name.clone(),
+                provider: metadata.provider.as_str().to_string(),
+                is_local: metadata.is_local,
+                downloaded,
             }
-        }
-        Err(_) => vec![],
-    };
-
-    // All available models for UTP
-    let all_model_names = vec![
-        "gpt-oss:20b",
-        "gpt-oss:120b",
-        "llama3.2:1b",
-        "llama3.2:3b",
-    ];
-
-    let models: Vec<ModelInfo> = all_model_names
-        .into_iter()
-        .map(|name| ModelInfo {
-            name: name.to_string(),
-            downloaded: downloaded_models.contains(&name.to_string()),
         })
         .collect();
 
@@ -224,13 +217,11 @@ async fn chat_handler(
     State(state): State<AppState>,
     Json(payload): Json<ChatRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let start = std::time::Instant::now();
-
     // Save user message if conversation_id is provided
     if let Some(conversation_id) = payload.conversation_id {
         let message_repo = MessageRepository::new(state.db_pool.clone());
         message_repo
-            .create_message(conversation_id, "user", &payload.message, None)
+            .create_message(conversation_id, "user", &payload.message, Some(&payload.model), None, None, None)
             .await
             .map_err(|e| {
                 (
@@ -252,41 +243,36 @@ async fn chat_handler(
             })?;
     }
 
-    // Call Ollama API
-    let ollama_request = OllamaGenerateRequest {
-        model: payload.model.clone(),
-        prompt: payload.message,
-        stream: false,
-    };
-
-    let response = state
-        .ollama_client
-        .post("http://localhost:11434/api/generate")
-        .json(&ollama_request)
-        .send()
-        .await
-        .map_err(|e| {
+    // Determine which provider to use based on model
+    let model_metadata = state
+        .model_registry
+        .get_model(&payload.model)
+        .ok_or_else(|| {
             (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to call Ollama API: {}", e),
+                StatusCode::BAD_REQUEST,
+                format!("Unknown model: {}", payload.model),
             )
         })?;
 
-    if !response.status().is_success() {
-        return Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Ollama API returned error: {}", response.status()),
-        ));
+    // Route to appropriate provider
+    let generate_response = match model_metadata.provider {
+        ProviderType::Ollama => state
+            .ollama_provider
+            .generate(&payload.model, &payload.message)
+            .await,
+        ProviderType::Groq => state
+            .groq_provider
+            .generate(&payload.model, &payload.message)
+            .await,
     }
-
-    let ollama_response: OllamaGenerateResponse = response.json().await.map_err(|e| {
+    .map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to parse Ollama response: {}", e),
+            format!("Failed to generate response: {}", e),
         )
     })?;
 
-    let latency_ms = start.elapsed().as_millis();
+    let latency_ms = generate_response.latency_ms;
 
     // Save assistant message if conversation_id is provided
     if let Some(conversation_id) = payload.conversation_id {
@@ -295,8 +281,11 @@ async fn chat_handler(
             .create_message(
                 conversation_id,
                 "assistant",
-                &ollama_response.response,
+                &generate_response.content,
+                Some(&payload.model),
                 Some(latency_ms as i32),
+                generate_response.tokens_per_second,
+                generate_response.total_tokens.map(|t| t as i32),
             )
             .await
             .map_err(|e| {
@@ -308,9 +297,11 @@ async fn chat_handler(
     }
 
     Ok(Json(ChatResponse {
-        response: ollama_response.response,
+        response: generate_response.content,
         model: payload.model,
         latency_ms,
+        tokens_per_second: generate_response.tokens_per_second,
+        total_tokens: generate_response.total_tokens,
     }))
 }
 
@@ -328,38 +319,41 @@ async fn switch_model_handler(
     }))
 }
 
-// Download model handler
+// Download model handler (Ollama only)
 async fn download_model_handler(
     State(state): State<AppState>,
     Json(payload): Json<ModelActionRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    // Check if model is a local Ollama model
+    let model_metadata = state
+        .model_registry
+        .get_model(&payload.model)
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("Unknown model: {}", payload.model),
+            )
+        })?;
+
+    if !model_metadata.is_local {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Cannot download cloud models".to_string(),
+        ));
+    }
+
     println!("📥 Downloading model: {}", payload.model);
 
-    let pull_request = OllamaPullRequest {
-        name: payload.model.clone(),
-        stream: false,
-    };
-
-    // Call Ollama pull API
-    let response = state
-        .ollama_client
-        .post("http://localhost:11434/api/pull")
-        .json(&pull_request)
-        .send()
+    state
+        .ollama_provider
+        .pull_model(&payload.model)
         .await
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to call Ollama pull API: {}", e),
+                format!("Failed to download model: {}", e),
             )
         })?;
-
-    if !response.status().is_success() {
-        return Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Ollama pull API returned error: {}", response.status()),
-        ));
-    }
 
     println!("✅ Model download initiated: {}", payload.model);
 
@@ -369,35 +363,41 @@ async fn download_model_handler(
     })))
 }
 
-// Delete model handler
+// Delete model handler (Ollama only)
 async fn delete_model_handler(
     State(state): State<AppState>,
     Json(payload): Json<ModelActionRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    // Check if model is a local Ollama model
+    let model_metadata = state
+        .model_registry
+        .get_model(&payload.model)
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("Unknown model: {}", payload.model),
+            )
+        })?;
+
+    if !model_metadata.is_local {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Cannot delete cloud models".to_string(),
+        ));
+    }
+
     println!("🗑️ Deleting model: {}", payload.model);
 
-    // Call Ollama delete API
-    let response = state
-        .ollama_client
-        .delete(format!("http://localhost:11434/api/delete"))
-        .json(&serde_json::json!({
-            "name": payload.model
-        }))
-        .send()
+    state
+        .ollama_provider
+        .delete_model(&payload.model)
         .await
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to call Ollama delete API: {}", e),
+                format!("Failed to delete model: {}", e),
             )
         })?;
-
-    if !response.status().is_success() {
-        return Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Ollama delete API returned error: {}", response.status()),
-        ));
-    }
 
     println!("✅ Model deleted: {}", payload.model);
 
