@@ -6,7 +6,26 @@ import { ChatInput } from "./chat-input";
 import { ModelSelector } from "./model-selector";
 import { Card, CardHeader, CardTitle, CardContent } from "./ui/card";
 import { Button } from "./ui/button";
-import { X, Maximize2, Minimize2 } from "lucide-react";
+import { Switch } from "./ui/switch";
+import { X, Maximize2, Minimize2, Zap } from "lucide-react";
+
+export type TraceStep = {
+  stage: string;
+  size_bytes: number;
+  duration_us: number;
+  description: string;
+};
+
+export type UtpMetadata = {
+  used_utp: boolean;
+  cache_hit: boolean;
+  compression_ratio: number;
+  latency_us: number;
+  original_size: number;
+  compressed_size: number;
+  precision_used: string;
+  trace: TraceStep[];
+};
 
 export type Message = {
   id: string;
@@ -18,6 +37,7 @@ export type Message = {
   completion_tokens?: number;
   tokens_per_second?: number;
   total_tokens?: number;
+  utp_metadata?: UtpMetadata;
 };
 
 type DbMessage = {
@@ -31,6 +51,7 @@ type DbMessage = {
   completion_tokens: number | null;
   tokens_per_second: number | null;
   total_tokens: number | null;
+  utp_metadata: UtpMetadata | null;
   created_at: string;
 };
 
@@ -92,6 +113,7 @@ export function ChatWindow({
     initialConversationId
   );
   const [conversationTitle, setConversationTitle] = useState<string>("New Conversation");
+  const [utpEnabled, setUtpEnabled] = useState<boolean>(false);
 
   useEffect(() => {
     if (initialConversationId && initialConversationId !== activeConversationId) {
@@ -114,12 +136,14 @@ export function ChatWindow({
         completion_tokens: msg.completion_tokens ?? undefined,
         tokens_per_second: msg.tokens_per_second ?? undefined,
         total_tokens: msg.total_tokens ?? undefined,
+        utp_metadata: msg.utp_metadata ?? undefined,
       }));
 
       setMessages(loadedMessages);
       setActiveConversationId(id);
       setCurrentModel(data.conversation.model);
       setConversationTitle(data.conversation.title);
+      setUtpEnabled(data.conversation.utp_enabled ?? false);
       onConversationChange?.(id);
     } catch (error) {
       console.error("Failed to load conversation:", error);
@@ -140,11 +164,18 @@ export function ChatWindow({
           body: JSON.stringify({
             title: text.slice(0, 50),
             model: currentModel,
+            utp_enabled: utpEnabled,
           }),
         });
 
         const newConversation = await response.json();
         conversationId = newConversation.id;
+
+        if (conversationId === null) {
+          console.error("Failed to create conversation: no ID returned");
+          return;
+        }
+
         setActiveConversationId(conversationId);
         setConversationTitle(newConversation.title);
         onConversationChange?.(conversationId);
@@ -175,6 +206,7 @@ export function ChatWindow({
           model: currentModel,
           message: text,
           conversation_id: conversationId,
+          use_utp: utpEnabled,
         }),
       });
 
@@ -194,6 +226,7 @@ export function ChatWindow({
         completion_tokens: data.completion_tokens,
         tokens_per_second: data.tokens_per_second,
         total_tokens: data.total_tokens,
+        utp_metadata: data.utp_metadata,
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
@@ -320,6 +353,17 @@ export function ChatWindow({
                 onModelChange={switchModel}
                 onDownloadModel={downloadModel}
                 onDeleteModel={deleteModel}
+              />
+            </div>
+
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-background/50 border border-border/50">
+              <Zap className={`h-3.5 w-3.5 ${utpEnabled ? 'text-blue-500' : 'text-muted-foreground'}`} />
+              <span className="text-[10px] font-medium text-muted-foreground hidden sm:inline">UTP</span>
+              <Switch
+                checked={utpEnabled}
+                onCheckedChange={setUtpEnabled}
+                disabled={activeConversationId !== null}
+                className="scale-75"
               />
             </div>
 
