@@ -13,6 +13,7 @@ use tower_http::cors::{Any, CorsLayer};
 
 mod db;
 mod providers;
+mod utp;
 
 use db::{
     models::{ConversationWithMessages, CreateConversationRequest},
@@ -23,6 +24,12 @@ use providers::{
     ollama::OllamaProvider,
     ModelProvider, ModelRegistry, ProviderType,
 };
+use utp::{
+    EmbeddingCache,
+    Compressor,
+    UtpMiddleware,
+    UtpMetadata,
+};
 
 // Shared application state
 #[derive(Clone)]
@@ -32,6 +39,7 @@ struct AppState {
     groq_provider: Arc<GroqProvider>,
     model_registry: Arc<ModelRegistry>,
     db_pool: PgPool,
+    utp_middleware: Arc<UtpMiddleware>,
 }
 
 // Request/Response types
@@ -40,6 +48,7 @@ struct ChatRequest {
     model: String,
     message: String,
     conversation_id: Option<i32>,
+    use_utp: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -51,6 +60,7 @@ struct ChatResponse {
     completion_tokens: Option<u32>,
     tokens_per_second: Option<f64>,
     total_tokens: Option<u32>,
+    utp_metadata: Option<UtpMetadata>,
 }
 
 #[derive(Debug, Serialize)]
@@ -123,6 +133,13 @@ async fn main() {
         println!("⚠️  Groq provider not configured (GROQ_API_KEY missing)");
     }
 
+    // Initialize UTP middleware
+    let cache = Arc::new(EmbeddingCache::new(1000)); // Max 1000 cached entries
+    let compressor = Compressor::new(); // Default compressor
+    let utp_middleware = Arc::new(UtpMiddleware::new(cache, compressor));
+
+    println!("✅ UTP middleware initialized (cache size: 1000, compression: Int8)");
+
     // Initialize state
     let state = AppState {
         active_model: Arc::new(RwLock::new("gpt-oss:20b".to_string())),
@@ -130,6 +147,7 @@ async fn main() {
         groq_provider,
         model_registry,
         db_pool,
+        utp_middleware,
     };
 
     // Configure CORS for Next.js frontend
@@ -151,6 +169,8 @@ async fn main() {
         .route("/conversations", post(create_conversation_handler))
         .route("/conversations/:id", get(get_conversation_handler))
         .route("/conversations/:id", delete(delete_conversation_handler))
+        // UTP stats route
+        .route("/utp/stats", get(utp_stats_handler))
         .with_state(state)
         .layer(cors);
 
@@ -225,16 +245,48 @@ async fn models_handler(State(state): State<AppState>) -> impl IntoResponse {
     })
 }
 
-// Chat handler
+// Chat handler (UTP-enabled)
 async fn chat_handler(
     State(state): State<AppState>,
     Json(payload): Json<ChatRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    // Determine if UTP should be used
+    let use_utp = if let Some(conversation_id) = payload.conversation_id {
+        // Get UTP setting from conversation
+        let conv_repo = ConversationRepository::new(state.db_pool.clone());
+        let conversation = conv_repo
+            .get_conversation(conversation_id)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to fetch conversation: {}", e),
+                )
+            })?
+            .ok_or((StatusCode::NOT_FOUND, "Conversation not found".to_string()))?;
+
+        conversation.utp_enabled
+    } else {
+        // Use explicit flag from request, default to false
+        payload.use_utp.unwrap_or(false)
+    };
+
     // Save user message if conversation_id is provided
     if let Some(conversation_id) = payload.conversation_id {
         let message_repo = MessageRepository::new(state.db_pool.clone());
         message_repo
-            .create_message(conversation_id, "user", &payload.message, Some(&payload.model), None, None, None, None, None)
+            .create_message(
+                conversation_id,
+                "user",
+                &payload.message,
+                Some(&payload.model),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
             .await
             .map_err(|e| {
                 (
@@ -267,40 +319,51 @@ async fn chat_handler(
             )
         })?;
 
-    // Route to appropriate provider
-    let generate_response = match model_metadata.provider {
-        ProviderType::Ollama => state
-            .ollama_provider
-            .generate(&payload.model, &payload.message)
-            .await,
-        ProviderType::Groq => state
-            .groq_provider
-            .generate(&payload.model, &payload.message)
-            .await,
-    }
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to generate response: {}", e),
-        )
-    })?;
+    // Get the appropriate provider
+    let provider: Arc<dyn ModelProvider> = match model_metadata.provider {
+        ProviderType::Ollama => state.ollama_provider.clone(),
+        ProviderType::Groq => state.groq_provider.clone(),
+    };
 
-    let latency_ms = generate_response.latency_ms;
+    // Route through UTP middleware
+    let utp_response = state
+        .utp_middleware
+        .generate_with_utp(provider, &payload.model, &payload.message, use_utp)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to generate response: {}", e),
+            )
+        })?;
+
+    let latency_ms = utp_response.response.latency_ms;
 
     // Save assistant message if conversation_id is provided
     if let Some(conversation_id) = payload.conversation_id {
         let message_repo = MessageRepository::new(state.db_pool.clone());
+
+        // Serialize UTP metadata to JSON
+        let utp_metadata_json = serde_json::to_value(&utp_response.metadata)
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to serialize UTP metadata: {}", e),
+                )
+            })?;
+
         message_repo
             .create_message(
                 conversation_id,
                 "assistant",
-                &generate_response.content,
+                &utp_response.response.content,
                 Some(&payload.model),
                 Some(latency_ms as i32),
-                generate_response.prompt_tokens.map(|t| t as i32),
-                generate_response.completion_tokens.map(|t| t as i32),
-                generate_response.tokens_per_second,
-                generate_response.total_tokens.map(|t| t as i32),
+                utp_response.response.prompt_tokens.map(|t| t as i32),
+                utp_response.response.completion_tokens.map(|t| t as i32),
+                utp_response.response.tokens_per_second,
+                utp_response.response.total_tokens.map(|t| t as i32),
+                Some(utp_metadata_json),
             )
             .await
             .map_err(|e| {
@@ -312,13 +375,14 @@ async fn chat_handler(
     }
 
     Ok(Json(ChatResponse {
-        response: generate_response.content,
+        response: utp_response.response.content,
         model: payload.model,
         latency_ms,
-        prompt_tokens: generate_response.prompt_tokens,
-        completion_tokens: generate_response.completion_tokens,
-        tokens_per_second: generate_response.tokens_per_second,
-        total_tokens: generate_response.total_tokens,
+        prompt_tokens: utp_response.response.prompt_tokens,
+        completion_tokens: utp_response.response.completion_tokens,
+        tokens_per_second: utp_response.response.tokens_per_second,
+        total_tokens: utp_response.response.total_tokens,
+        utp_metadata: Some(utp_response.metadata),
     }))
 }
 
@@ -447,7 +511,7 @@ async fn create_conversation_handler(
     let repo = ConversationRepository::new(state.db_pool.clone());
 
     let conversation = repo
-        .create_conversation(&payload.title, &payload.model)
+        .create_conversation(&payload.title, &payload.model, payload.utp_enabled)
         .await
         .map_err(|e| {
             (
@@ -510,4 +574,12 @@ async fn delete_conversation_handler(
         "success": true,
         "message": "Conversation deleted"
     })))
+}
+
+// UTP stats handler
+async fn utp_stats_handler(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let stats = state.utp_middleware.get_comparison_stats();
+    Json(stats)
 }
