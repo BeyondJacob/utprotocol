@@ -50,11 +50,42 @@ pub async fn init_db(database_url: &str) -> Result<PgPool> {
     .execute(&pool)
     .await?;
 
+    // Add UTP columns to conversations table
+    sqlx::query(
+        r#"
+        ALTER TABLE conversations
+        ADD COLUMN IF NOT EXISTS utp_enabled BOOLEAN NOT NULL DEFAULT FALSE
+        "#,
+    )
+    .execute(&pool)
+    .await?;
+
+    // Add UTP metadata column to messages table
+    sqlx::query(
+        r#"
+        ALTER TABLE messages
+        ADD COLUMN IF NOT EXISTS utp_metadata JSONB
+        "#,
+    )
+    .execute(&pool)
+    .await?;
+
     // Create index for faster queries
     sqlx::query(
         r#"
         CREATE INDEX IF NOT EXISTS idx_messages_conversation_id
         ON messages(conversation_id)
+        "#,
+    )
+    .execute(&pool)
+    .await?;
+
+    // Create index for UTP metadata queries
+    sqlx::query(
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_messages_utp_used
+        ON messages ((utp_metadata->>'used_utp'))
+        WHERE utp_metadata IS NOT NULL
         "#,
     )
     .execute(&pool)

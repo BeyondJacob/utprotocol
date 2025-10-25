@@ -2,7 +2,9 @@
 
 import { useEffect, useRef } from "react";
 import { Card } from "./ui/card";
-import type { Message, ModelInfo } from "./chat-window";
+import { Badge } from "./ui/badge";
+import { ArrowRight } from "lucide-react";
+import type { Message, ModelInfo, TraceStep } from "./chat-window";
 import { calculateCost, formatCost } from "./chat-window";
 
 export function MessageList({
@@ -13,11 +15,12 @@ export function MessageList({
   availableModels?: ModelInfo[];
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom when new message arrives
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollIntoView({ behavior: "smooth" });
+    if (containerRef.current) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight;
     }
   }, [messages]);
 
@@ -36,7 +39,7 @@ export function MessageList({
   };
 
   return (
-    <div className="flex-1 overflow-y-auto mb-2 md:mb-4 px-2 sm:px-3 md:px-4 min-w-0">
+    <div ref={containerRef} className="flex-1 overflow-y-auto mb-2 md:mb-4 px-2 sm:px-3 md:px-4 min-w-0">
       <div className="space-y-3 md:space-y-4 py-2 max-w-full">
         {messages.map((message) => {
           const pricing = getModelPricing(message.model);
@@ -116,6 +119,79 @@ export function MessageList({
                               </span>
                             </>
                           )}
+                        </div>
+                      )}
+
+                      {/* UTP Metadata Badges */}
+                      {message.utp_metadata && (
+                        <div className="mt-2 space-y-2">
+                          {/* Trace Visualization */}
+                          {message.utp_metadata.trace && message.utp_metadata.trace.length > 0 && (
+                            <div className="flex items-center gap-1 text-[10px] text-muted-foreground font-mono overflow-x-auto pb-1">
+                              {message.utp_metadata.trace.map((step: TraceStep, idx: number) => (
+                                <div key={idx} className="flex items-center gap-1 flex-shrink-0">
+                                  <div className="flex flex-col items-center">
+                                    <span className={`font-semibold ${
+                                      step.stage === 'Cache' && message.utp_metadata?.cache_hit
+                                        ? 'text-green-600'
+                                        : step.stage === 'Compress'
+                                        ? 'text-blue-600'
+                                        : step.stage === 'LLM'
+                                        ? 'text-orange-600'
+                                        : 'text-gray-600'
+                                    }`}>
+                                      {step.stage}
+                                    </span>
+                                    {step.size_bytes > 0 && (
+                                      <span className="text-[9px] text-muted-foreground/70">
+                                        {step.size_bytes}B
+                                      </span>
+                                    )}
+                                    {step.duration_us > 0 && (
+                                      <span className="text-[9px] text-muted-foreground/70">
+                                        {step.duration_us >= 1000
+                                          ? `${(step.duration_us / 1000).toFixed(1)}ms`
+                                          : `${step.duration_us}µs`}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {idx < (message.utp_metadata?.trace?.length ?? 0) - 1 && (
+                                    <ArrowRight className="h-3 w-3 text-muted-foreground/50" />
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Badges */}
+                          <div className="flex flex-wrap gap-1.5">
+                            {message.utp_metadata.used_utp ? (
+                              <>
+                                <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-[10px] sm:text-xs">
+                                  UTP Mode
+                                </Badge>
+                                {message.utp_metadata.cache_hit && (
+                                  <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 text-[10px] sm:text-xs">
+                                    ⚡ Cache Hit
+                                  </Badge>
+                                )}
+                                <Badge variant="outline" className="text-[10px] sm:text-xs">
+                                  {message.utp_metadata.compression_ratio.toFixed(2)}x compression
+                                </Badge>
+                                <Badge variant="outline" className="text-[10px] sm:text-xs">
+                                  {message.utp_metadata.compressed_size}B
+                                  (saved {message.utp_metadata.original_size - message.utp_metadata.compressed_size}B)
+                                </Badge>
+                                <Badge variant="outline" className="text-[10px] sm:text-xs">
+                                  {message.utp_metadata.precision_used}
+                                </Badge>
+                              </>
+                            ) : (
+                              <Badge variant="outline" className="bg-gray-50 text-gray-700 border-gray-200 text-[10px] sm:text-xs">
+                                Traditional Mode
+                              </Badge>
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>

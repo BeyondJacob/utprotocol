@@ -306,11 +306,11 @@ export function MultiChatInterface() {
         </div>
 
         {/* Chat Windows Container */}
-        <div className={`flex-1 overflow-auto p-2 md:p-3 ${getLayoutClasses()}`}>
+        <div className={`flex-1 overflow-hidden p-2 md:p-3 ${getLayoutClasses()}`}>
           {visibleWindows.map((window) => (
             <div
               key={window.id}
-              className="min-h-0 h-full animate-in fade-in-50 duration-300"
+              className="min-h-0 h-full animate-in fade-in-50 duration-300 overflow-hidden"
             >
               <ChatWindow
                 windowId={window.id}

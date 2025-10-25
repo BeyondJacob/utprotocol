@@ -38,6 +38,10 @@ export type ModelInfo = {
   provider: string;
   is_local: boolean;
   downloaded: boolean;
+  pricing?: {
+    input_per_million: number;
+    output_per_million: number;
+  };
 };
 
 export function ChatInterface() {
