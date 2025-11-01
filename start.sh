@@ -40,6 +40,18 @@ cd ..
 # Wait a bit for backend to start
 sleep 2
 
+# Check and install frontend dependencies if needed
+echo -e "${BLUE}Checking frontend dependencies...${NC}"
+if [ ! -d "llm-frontend/node_modules" ]; then
+    echo -e "${BLUE}Installing frontend dependencies (this may take a moment)...${NC}"
+    cd llm-frontend
+    npm install
+    cd ..
+    echo -e "${GREEN}Frontend dependencies installed${NC}"
+else
+    echo -e "${GREEN}Frontend dependencies already installed${NC}"
+fi
+
 # Start frontend
 echo -e "${GREEN}Starting frontend on http://localhost:3000${NC}"
 cd llm-frontend
