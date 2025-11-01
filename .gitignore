@@ -1,2 +1,3 @@
 .env
 CLAUDE_KNOWLEDGE.md
+*.sql
