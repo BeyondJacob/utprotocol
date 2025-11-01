@@ -16,6 +16,9 @@ export type Message = {
   content: string;
   model?: string;
   latency?: number;
+  network_send_ms?: number;
+  network_receive_ms?: number;
+  network_total_ms?: number;
   tokens_per_second?: number;
   total_tokens?: number;
 };
@@ -27,6 +30,9 @@ type DbMessage = {
   content: string;
   model: string | null;
   latency_ms: number | null;
+  network_send_ms: number | null;
+  network_receive_ms: number | null;
+  network_total_ms: number | null;
   tokens_per_second: number | null;
   total_tokens: number | null;
   created_at: string;
@@ -95,6 +101,9 @@ export function ChatInterface() {
         content: msg.content,
         model: msg.model ?? undefined,
         latency: msg.latency_ms ?? undefined,
+        network_send_ms: msg.network_send_ms ?? undefined,
+        network_receive_ms: msg.network_receive_ms ?? undefined,
+        network_total_ms: msg.network_total_ms ?? undefined,
         tokens_per_second: msg.tokens_per_second ?? undefined,
         total_tokens: msg.total_tokens ?? undefined,
       }));
@@ -223,6 +232,9 @@ export function ChatInterface() {
         content: data.response,
         model: data.model,
         latency: data.latency_ms,
+        network_send_ms: data.network_send_ms,
+        network_receive_ms: data.network_receive_ms,
+        network_total_ms: data.network_total_ms,
         tokens_per_second: data.tokens_per_second,
         total_tokens: data.total_tokens,
       };

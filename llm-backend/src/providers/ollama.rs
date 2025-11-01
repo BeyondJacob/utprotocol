@@ -123,12 +123,15 @@ impl ModelProvider for OllamaProvider {
             stream: false,
         };
 
+        // Track network send time
+        let send_start = Instant::now();
         let response = self
             .client
             .post(format!("{}/api/generate", OLLAMA_BASE_URL))
             .json(&request)
             .send()
             .await?;
+        let network_send_ms = send_start.elapsed().as_millis();
 
         if !response.status().is_success() {
             return Err(anyhow!(
@@ -137,8 +140,13 @@ impl ModelProvider for OllamaProvider {
             ));
         }
 
+        // Track network receive time
+        let receive_start = Instant::now();
         let ollama_response: OllamaGenerateResponseBody = response.json().await?;
+        let network_receive_ms = receive_start.elapsed().as_millis();
+
         let latency_ms = start.elapsed().as_millis();
+        let network_total_ms = network_send_ms + network_receive_ms;
 
         // Calculate tokens per second from Ollama's eval_count
         let total_tokens = ollama_response.eval_count.or(ollama_response.prompt_eval_count);
@@ -155,8 +163,11 @@ impl ModelProvider for OllamaProvider {
         Ok(GenerateResponse {
             content: ollama_response.response,
             latency_ms,
-            prompt_tokens: None,  // Ollama doesn't provide this separately
-            completion_tokens: None,  // Ollama doesn't provide this separately
+            network_send_ms: Some(network_send_ms),
+            network_receive_ms: Some(network_receive_ms),
+            network_total_ms: Some(network_total_ms),
+            prompt_tokens: ollama_response.prompt_eval_count,
+            completion_tokens: ollama_response.eval_count,
             total_tokens,
             tokens_per_second,
         })

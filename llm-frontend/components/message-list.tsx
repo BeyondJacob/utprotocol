@@ -82,7 +82,7 @@ export function MessageList({
                         {message.latency && (
                           <>
                             {message.model && <span className="hidden sm:inline">•</span>}
-                            <span className="whitespace-nowrap">{message.latency}ms</span>
+                            <span className="whitespace-nowrap" title="Total latency">Total: {message.latency}ms</span>
                           </>
                         )}
                         {message.tokens_per_second && (
@@ -92,6 +92,34 @@ export function MessageList({
                           </>
                         )}
                       </div>
+
+                      {/* Network latency breakdown */}
+                      {(message.network_send_ms || message.network_receive_ms || message.network_total_ms) && (
+                        <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                          <span className="opacity-80">Network:</span>
+                          {message.network_send_ms && (
+                            <span className="whitespace-nowrap" title="Time to send request">
+                              Send {message.network_send_ms}ms
+                            </span>
+                          )}
+                          {message.network_receive_ms && (
+                            <>
+                              {message.network_send_ms && <span>•</span>}
+                              <span className="whitespace-nowrap" title="Time to receive response">
+                                Receive {message.network_receive_ms}ms
+                              </span>
+                            </>
+                          )}
+                          {message.network_total_ms && (
+                            <>
+                              {(message.network_send_ms || message.network_receive_ms) && <span>•</span>}
+                              <span className="whitespace-nowrap font-medium" title="Total network time">
+                                Total {message.network_total_ms}ms
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      )}
 
                       {/* Token breakdown */}
                       {(message.prompt_tokens || message.completion_tokens) && (

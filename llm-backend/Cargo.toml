@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 # Web Server
-axum = "0.7"
+axum = { version = "0.7", features = ["multipart"] }
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.6", features = ["cors"] }
 
@@ -30,8 +30,20 @@ dotenvy = "0.15"
 async-trait = "0.1"
 
 # UTP Protocol
-half = "2.3"              # f16 support
+half = { version = "2.3", features = ["serde"] }  # f16 support with serde
 dashmap = "5.5"           # Concurrent cache
 bincode = "1.3"           # Binary serialization
 crc32fast = "1.3"         # Checksums for protocol
-rand = "0.8"              # For mock embeddings (MVP)
+rand = { version = "0.8", features = ["std_rng"] }  # For mock embeddings (fallback)
+
+# Production improvements
+governor = "0.6"          # Rate limiting
+tracing = "0.1"           # Structured logging
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+toml = "0.8"              # Configuration files
+
+# PDF processing and file uploads
+pdf-extract = "0.7"       # PDF text extraction
+tempfile = "3"            # Temporary file handling
+bytes = "1"               # Byte operations

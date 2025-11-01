@@ -6,6 +6,8 @@ import { ChatSidebar, type Conversation } from "./chat-sidebar";
 import { Button } from "./ui/button";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "./ui/sheet";
 import { Menu, Plus, Columns2, Columns3, Square } from "lucide-react";
+import { ModeToggle, type InterfaceMode } from "./mode-toggle";
+import { AgentFlowCanvas } from "./agent-flow/agent-flow-canvas";
 
 type ChatWindowState = {
   id: string;
@@ -15,6 +17,7 @@ type ChatWindowState = {
 type LayoutMode = "single" | "dual" | "triple";
 
 export function MultiChatInterface() {
+  const [mode, setMode] = useState<InterfaceMode>("conversation");
   const [windows, setWindows] = useState<ChatWindowState[]>([
     { id: "window-1", conversationId: null },
   ]);
@@ -222,113 +225,135 @@ export function MultiChatInterface() {
             </h1>
           </div>
 
-          {/* Layout Controls */}
-          <div className="flex items-center gap-1 flex-shrink-0">
-            {!maximizedWindow && (
+          {/* Right-side Controls */}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {/* Mode-specific Controls - Only in Conversation Mode */}
+            {mode === "conversation" && (
               <>
-                <Button
-                  variant={layoutMode === "single" ? "default" : "ghost"}
-                  size="icon"
-                  className="h-8 w-8 hidden sm:flex"
-                  onClick={() => {
-                    setLayoutMode("single");
-                    if (windows.length > 1) {
-                      setWindows([windows[0]]);
-                    }
-                  }}
-                  title="Single window"
-                >
-                  <Square className="h-4 w-4" />
-                </Button>
+                <div className="flex items-center gap-1 animate-in fade-in-0 slide-in-from-right-2 duration-200">
+                  {!maximizedWindow && (
+                    <>
+                      <Button
+                        variant={layoutMode === "single" ? "default" : "ghost"}
+                        size="icon"
+                        className="h-8 w-8 hidden sm:flex transition-all duration-200"
+                        onClick={() => {
+                          setLayoutMode("single");
+                          if (windows.length > 1) {
+                            setWindows([windows[0]]);
+                          }
+                        }}
+                        title="Single window"
+                      >
+                        <Square className="h-4 w-4" />
+                      </Button>
 
-                <Button
-                  variant={layoutMode === "dual" ? "default" : "ghost"}
-                  size="icon"
-                  className="h-8 w-8 hidden sm:flex"
-                  onClick={() => {
-                    setLayoutMode("dual");
-                    if (windows.length === 1) {
-                      addWindow();
-                    } else if (windows.length > 2) {
-                      setWindows(windows.slice(0, 2));
-                    }
-                  }}
-                  title="Dual windows"
-                >
-                  <Columns2 className="h-4 w-4" />
-                </Button>
+                      <Button
+                        variant={layoutMode === "dual" ? "default" : "ghost"}
+                        size="icon"
+                        className="h-8 w-8 hidden sm:flex transition-all duration-200"
+                        onClick={() => {
+                          setLayoutMode("dual");
+                          if (windows.length === 1) {
+                            addWindow();
+                          } else if (windows.length > 2) {
+                            setWindows(windows.slice(0, 2));
+                          }
+                        }}
+                        title="Dual windows"
+                      >
+                        <Columns2 className="h-4 w-4" />
+                      </Button>
 
-                <Button
-                  variant={layoutMode === "triple" ? "default" : "ghost"}
-                  size="icon"
-                  className="h-8 w-8 hidden md:flex"
-                  onClick={() => {
-                    setLayoutMode("triple");
-                    const currentLength = windows.length;
-                    if (currentLength < 3) {
-                      const newWindows = [...windows];
-                      for (let i = currentLength; i < 3; i++) {
-                        newWindows.push({
-                          id: `window-${Date.now()}-${i}`,
-                          conversationId: null,
-                        });
-                      }
-                      setWindows(newWindows);
-                    }
-                  }}
-                  title="Triple windows"
-                >
-                  <Columns3 className="h-4 w-4" />
-                </Button>
+                      <Button
+                        variant={layoutMode === "triple" ? "default" : "ghost"}
+                        size="icon"
+                        className="h-8 w-8 hidden md:flex transition-all duration-200"
+                        onClick={() => {
+                          setLayoutMode("triple");
+                          const currentLength = windows.length;
+                          if (currentLength < 3) {
+                            const newWindows = [...windows];
+                            for (let i = currentLength; i < 3; i++) {
+                              newWindows.push({
+                                id: `window-${Date.now()}-${i}`,
+                                conversationId: null,
+                              });
+                            }
+                            setWindows(newWindows);
+                          }
+                        }}
+                        title="Triple windows"
+                      >
+                        <Columns3 className="h-4 w-4" />
+                      </Button>
+                    </>
+                  )}
+
+                  <Button
+                    variant="default"
+                    size="sm"
+                    className="h-8 gap-1.5 text-xs md:text-sm transition-all duration-200"
+                    onClick={addWindow}
+                    disabled={windows.length >= 3 || maximizedWindow !== null}
+                    title="Add new window"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">New Window</span>
+                  </Button>
+                </div>
+
+                {/* Separator */}
+                <div className="h-6 w-px bg-border animate-in fade-in-0 duration-200" />
               </>
             )}
 
-            <Button
-              variant="default"
-              size="sm"
-              className="h-8 gap-1.5 text-xs md:text-sm"
-              onClick={addWindow}
-              disabled={windows.length >= 3 || maximizedWindow !== null}
-              title="Add new window"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">New Window</span>
-            </Button>
+            {/* Mode Toggle - Always visible on far right */}
+            <ModeToggle mode={mode} onModeChange={setMode} />
           </div>
         </div>
       </div>
 
-      {/* Chat Area */}
-      <div className="flex-1 flex overflow-hidden w-full">
-        {/* Desktop Sidebar */}
-        <div className="hidden lg:block flex-shrink-0">
-          <SidebarContent />
-        </div>
-
-        {/* Chat Windows Container */}
-        <div className={`flex-1 overflow-hidden p-2 md:p-3 ${getLayoutClasses()}`}>
-          {visibleWindows.map((window) => (
-            <div
-              key={window.id}
-              className="min-h-0 h-full animate-in fade-in-50 duration-300 overflow-hidden"
-            >
-              <ChatWindow
-                windowId={window.id}
-                conversationId={window.conversationId}
-                onClose={() => removeWindow(window.id)}
-                availableModels={availableModels}
-                onConversationChange={(id) => {
-                  setWindows(
-                    windows.map((w) => (w.id === window.id ? { ...w, conversationId: id } : w))
-                  );
-                  fetchConversations();
-                }}
-                isMaximized={maximizedWindow === window.id}
-                onToggleMaximize={() => toggleMaximize(window.id)}
-              />
+      {/* Main Content Area */}
+      <div className="flex-1 flex overflow-hidden w-full relative">
+        {mode === "conversation" ? (
+          <div className="flex-1 flex overflow-hidden w-full animate-in fade-in-0 slide-in-from-left-2 duration-300">
+            {/* Desktop Sidebar */}
+            <div className="hidden lg:block flex-shrink-0">
+              <SidebarContent />
             </div>
-          ))}
-        </div>
+
+            {/* Chat Windows Container */}
+            <div className={`flex-1 overflow-hidden p-2 md:p-3 ${getLayoutClasses()}`}>
+              {visibleWindows.map((window) => (
+                <div
+                  key={window.id}
+                  className="min-h-0 h-full animate-in fade-in-50 duration-300 overflow-hidden"
+                >
+                  <ChatWindow
+                    windowId={window.id}
+                    conversationId={window.conversationId}
+                    onClose={() => removeWindow(window.id)}
+                    availableModels={availableModels}
+                    onConversationChange={(id) => {
+                      setWindows(
+                        windows.map((w) => (w.id === window.id ? { ...w, conversationId: id } : w))
+                      );
+                      fetchConversations();
+                    }}
+                    isMaximized={maximizedWindow === window.id}
+                    onToggleMaximize={() => toggleMaximize(window.id)}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          /* Agentic Mode */
+          <div className="flex-1 overflow-hidden animate-in fade-in-0 slide-in-from-right-2 duration-300">
+            <AgentFlowCanvas />
+          </div>
+        )}
       </div>
     </div>
   );

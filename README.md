@@ -1,6 +1,11 @@
 # Universal Thought Protocol (UTP)
 
-A powerful full-stack LLM chat application with Rust backend and Next.js frontend, featuring one-click model management and multi-model support. Run OpenAI's gpt-oss models (20B and 120B) and other LLMs locally via Ollama.
+A production-grade full-stack LLM chat application with Rust backend and Next.js frontend, featuring:
+- **One-click model management** and multi-model support
+- **Production-ready infrastructure**: Rate limiting, circuit breakers, LRU caching, structured logging
+- **Multi-provider support**: Ollama (local) + Groq (cloud)
+- **UTP Protocol**: Layer-3 compression and semantic caching for reduced latency and costs
+- Run OpenAI's gpt-oss models (20B and 120B) and other LLMs locally via Ollama
 
 ## Architecture
 
@@ -36,11 +41,12 @@ A powerful full-stack LLM chat application with Rust backend and Next.js fronten
 
 ## Tech Stack
 
-- **Backend**: Rust with Axum web framework
+- **Backend**: Rust with Axum web framework + PostgreSQL
 - **Frontend**: Next.js 15 with TypeScript and Tailwind CSS
 - **UI Components**: shadcn/ui
-- **Model Hosting**: Ollama
+- **Model Hosting**: Ollama (local) + Groq (cloud)
 - **Communication**: REST API
+- **Production Features**: Rate limiting (governor), circuit breakers, structured logging (tracing), TOML configuration
 
 ## Prerequisites
 
@@ -282,8 +288,10 @@ Performance will vary based on your hardware (CPU/GPU).
 ### Core Functionality
 - ✅ Real-time chat interface with Universal Thought Protocol branding
 - ✅ Multiple model support (gpt-oss, llama, and more)
+- ✅ Multi-provider support (Ollama local + Groq cloud)
 - ✅ Model switching without restart
 - ✅ Response latency tracking for performance monitoring
+- ✅ Conversation persistence with PostgreSQL
 
 ### Model Management
 - ✅ **One-click model downloads** - Download any model directly from the UI
@@ -291,23 +299,37 @@ Performance will vary based on your hardware (CPU/GPU).
 - ✅ **Real-time download status** - See which models are available vs downloaded
 - ✅ **Visual status indicators** - Checkmarks and X icons show model status at a glance
 
+### Production Features (NEW ✨)
+- ✅ **Rate Limiting** - Token bucket rate limiting for cloud providers (60 req/min configurable)
+- ✅ **Circuit Breaker** - Failfast pattern for provider failures with automatic recovery
+- ✅ **LRU Cache** - Least-recently-used eviction with TTL support
+- ✅ **Structured Logging** - Production-grade tracing with environment-based filtering
+- ✅ **Configuration Management** - TOML-based config for all tunables
+- ✅ **Connection Pooling** - Optimized HTTP client configuration
+
 ### Technical Features
 - ✅ Clean, modern UI with shadcn/ui components
 - ✅ Full TypeScript type safety throughout the stack
 - ✅ CORS-enabled REST API for flexible integration
 - ✅ Comprehensive error handling and loading states
 - ✅ Rust backend for high performance and safety
-- ✅ Direct Ollama API integration
+- ✅ Direct Ollama API integration + Groq cloud API
+- ✅ UTP compression and caching layer
 
 ## Future Enhancements
 
+- [ ] Real embedding model integration (replace mock embeddings)
 - [ ] Streaming responses (SSE or WebSocket)
-- [ ] Chat history persistence
+- [x] Chat history persistence ✅
 - [ ] System prompts customization
 - [ ] Temperature and other parameter controls
-- [ ] Multi-turn conversation context
+- [x] Multi-turn conversation context ✅
 - [ ] Export chat history
 - [ ] Dark mode toggle
+- [ ] Prometheus metrics endpoint
+- [ ] Redis cache backend for distributed deployments
+
+See [PRODUCTION_IMPROVEMENTS.md](PRODUCTION_IMPROVEMENTS.md) for detailed roadmap.
 
 ## License
 

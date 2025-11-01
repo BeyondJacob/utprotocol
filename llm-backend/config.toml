@@ -1,0 +1,56 @@
+# UTP Protocol Configuration
+
+[cache]
+# Maximum number of entries in the cache
+max_entries = 10000
+
+# Time-to-live for cache entries in seconds (3600 = 1 hour)
+ttl_seconds = 3600
+
+# Cache eviction policy (lru or random)
+eviction_policy = "lru"
+
+# Semantic similarity threshold for cache hits (0.0 to 1.0)
+# Queries with similarity >= this threshold will be considered a cache hit
+# Higher values (0.95+) = stricter matching, lower false positives
+# Lower values (0.85-0.90) = more lenient, higher cache hit rate
+similarity_threshold = 0.92
+
+[providers.groq]
+# Request timeout in seconds
+timeout_seconds = 30
+
+# Maximum number of retries for failed requests
+max_retries = 3
+
+# Rate limit: requests per minute
+rate_limit_per_minute = 60
+
+# Circuit breaker: failures before opening circuit
+circuit_breaker_threshold = 5
+
+# Circuit breaker: cooldown period in seconds
+circuit_breaker_cooldown_seconds = 60
+
+[providers.ollama]
+# Request timeout in seconds
+timeout_seconds = 120
+
+# Maximum number of retries for failed requests
+max_retries = 3
+
+# Rate limit: requests per minute (higher for local)
+rate_limit_per_minute = 120
+
+# Circuit breaker: failures before opening circuit
+circuit_breaker_threshold = 10
+
+# Circuit breaker: cooldown period in seconds
+circuit_breaker_cooldown_seconds = 30
+
+[server]
+# Server host
+host = "127.0.0.1"
+
+# Server port
+port = 3001

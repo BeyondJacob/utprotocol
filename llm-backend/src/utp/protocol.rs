@@ -33,7 +33,7 @@ pub struct UtpHeader {
 }
 
 /// Quantized data variants for different precision levels
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)] // Fields accessed via pattern matching in compression module
 pub enum QuantizedData {
     F32(Vec<f32>),                    // Baseline, no compression
@@ -43,7 +43,7 @@ pub enum QuantizedData {
 }
 
 /// Compressed embedding representation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)] // Fields accessed in compression and middleware modules
 pub struct CompressedEmbedding {
     pub dimension: u16,

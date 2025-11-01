@@ -33,6 +33,9 @@ export type Message = {
   content: string;
   model?: string;
   latency?: number;
+  network_send_ms?: number;
+  network_receive_ms?: number;
+  network_total_ms?: number;
   prompt_tokens?: number;
   completion_tokens?: number;
   tokens_per_second?: number;
@@ -47,6 +50,9 @@ type DbMessage = {
   content: string;
   model: string | null;
   latency_ms: number | null;
+  network_send_ms: number | null;
+  network_receive_ms: number | null;
+  network_total_ms: number | null;
   prompt_tokens: number | null;
   completion_tokens: number | null;
   tokens_per_second: number | null;
@@ -132,6 +138,9 @@ export function ChatWindow({
         content: msg.content,
         model: msg.model ?? undefined,
         latency: msg.latency_ms ?? undefined,
+        network_send_ms: msg.network_send_ms ?? undefined,
+        network_receive_ms: msg.network_receive_ms ?? undefined,
+        network_total_ms: msg.network_total_ms ?? undefined,
         prompt_tokens: msg.prompt_tokens ?? undefined,
         completion_tokens: msg.completion_tokens ?? undefined,
         tokens_per_second: msg.tokens_per_second ?? undefined,
@@ -222,6 +231,9 @@ export function ChatWindow({
         content: data.response,
         model: data.model,
         latency: data.latency_ms,
+        network_send_ms: data.network_send_ms,
+        network_receive_ms: data.network_receive_ms,
+        network_total_ms: data.network_total_ms,
         prompt_tokens: data.prompt_tokens,
         completion_tokens: data.completion_tokens,
         tokens_per_second: data.tokens_per_second,

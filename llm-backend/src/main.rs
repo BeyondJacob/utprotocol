@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, State},
+    extract::{DefaultBodyLimit, Path, State},
     http::{Method, StatusCode},
     response::IntoResponse,
     routing::{delete, get, post},
@@ -14,10 +14,19 @@ use tower_http::cors::{Any, CorsLayer};
 mod db;
 mod providers;
 mod utp;
+mod agents;
+mod config;
+mod pdf_processor;
+mod rag_handlers;
 
 use db::{
     models::{ConversationWithMessages, CreateConversationRequest},
     repository::{ConversationRepository, MessageRepository},
+    vector_repository::VectorRepository,
+};
+use rag_handlers::{
+    list_documents_handler, get_document_handler, delete_document_handler,
+    upload_document_handler, rag_query_handler, rag_statistics_handler,
 };
 use providers::{
     groq::GroqProvider,
@@ -30,6 +39,17 @@ use utp::{
     UtpMiddleware,
     UtpMetadata,
 };
+use agents::{
+    AgentRegistry,
+    AgentExecutor,
+    FlowExecutor,
+    CreateAgentRequest,
+    UpdateAgentRequest,
+    CreateFlowRequest,
+    CreateEdgeRequest,
+    ExecuteAgentRequest,
+    ExecuteFlowRequest,
+};
 
 // Shared application state
 #[derive(Clone)]
@@ -40,6 +60,11 @@ struct AppState {
     model_registry: Arc<ModelRegistry>,
     db_pool: PgPool,
     utp_middleware: Arc<UtpMiddleware>,
+    agent_registry: Arc<AgentRegistry>,
+    agent_executor: Arc<AgentExecutor>,
+    flow_executor: Arc<FlowExecutor>,
+    vector_repository: Arc<VectorRepository>,
+    embedding_provider: Arc<dyn utp::EmbeddingProvider>,
 }
 
 // Request/Response types
@@ -56,6 +81,9 @@ struct ChatResponse {
     response: String,
     model: String,
     latency_ms: u128,
+    network_send_ms: Option<u128>,
+    network_receive_ms: Option<u128>,
+    network_total_ms: Option<u128>,
     prompt_tokens: Option<u32>,
     completion_tokens: Option<u32>,
     tokens_per_second: Option<f64>,
@@ -98,6 +126,18 @@ struct ModelActionRequest {
 
 #[tokio::main]
 async fn main() {
+    // Initialize tracing
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
+
+    // Load configuration
+    let config = config::Config::load();
+    tracing::info!("Configuration loaded");
+
     // Load environment variables from .env file
     dotenvy::from_filename("../.env").ok();
 
@@ -109,36 +149,84 @@ async fn main() {
         .await
         .expect("Failed to initialize database");
 
-    println!("✅ Database connected and initialized");
+    tracing::info!("Database connected and initialized");
 
-    // Initialize HTTP client
-    let http_client = reqwest::Client::new();
+    // Initialize HTTP client with timeout
+    let http_client = reqwest::Client::builder()
+        .timeout(config.provider_timeout("groq"))
+        .pool_max_idle_per_host(10)
+        .build()
+        .expect("Failed to create HTTP client");
 
-    // Initialize providers
+    // Initialize providers with configuration
     let groq_api_key = std::env::var("GROQ_API_KEY").ok();
     let ollama_provider = Arc::new(OllamaProvider::new(http_client.clone()));
-    let groq_provider = Arc::new(GroqProvider::new(http_client.clone(), groq_api_key.clone()));
+    let groq_provider = Arc::new(GroqProvider::with_limits(
+        http_client.clone(),
+        groq_api_key.clone(),
+        config.providers.groq.rate_limit_per_minute,
+        config.providers.groq.circuit_breaker_threshold,
+        std::time::Duration::from_secs(config.providers.groq.circuit_breaker_cooldown_seconds),
+    ));
     let model_registry = Arc::new(ModelRegistry::new());
 
     // Check provider status
     if ollama_provider.is_connected().await {
-        println!("✅ Ollama provider connected");
+        tracing::info!("Ollama provider connected");
     } else {
-        println!("⚠️  Ollama provider not connected");
+        tracing::warn!("Ollama provider not connected");
     }
 
     if groq_provider.is_connected().await {
-        println!("✅ Groq provider configured");
+        tracing::info!("Groq provider configured");
     } else {
-        println!("⚠️  Groq provider not configured (GROQ_API_KEY missing)");
+        tracing::warn!("Groq provider not configured (GROQ_API_KEY missing)");
     }
 
-    // Initialize UTP middleware
-    let cache = Arc::new(EmbeddingCache::new(1000)); // Max 1000 cached entries
-    let compressor = Compressor::new(); // Default compressor
-    let utp_middleware = Arc::new(UtpMiddleware::new(cache, compressor));
+    // Initialize UTP middleware with configuration
+    let cache = Arc::new(EmbeddingCache::with_ttl(
+        config.cache.max_entries,
+        config.cache_ttl(),
+    ));
+    let compressor = Compressor::new();
 
-    println!("✅ UTP middleware initialized (cache size: 1000, compression: Int8)");
+    // Initialize embedding provider (Ollama with gpt-oss:20b for embeddings)
+    // Falls back to mock embeddings if Ollama is not available
+    let embedding_provider: Arc<dyn utp::EmbeddingProvider> = if ollama_provider.is_connected().await {
+        tracing::info!("Using Ollama for embeddings (model: nomic-embed-text)");
+        Arc::new(utp::OllamaEmbeddingProvider::new(
+            http_client.clone(),
+            "nomic-embed-text".to_string(),
+        ))
+    } else {
+        tracing::warn!("Ollama not connected, using mock embeddings");
+        Arc::new(utp::MockEmbeddingProvider::default())
+    };
+
+    let utp_middleware = Arc::new(UtpMiddleware::with_similarity_threshold(
+        cache,
+        compressor,
+        embedding_provider.clone(),
+        config.cache.similarity_threshold,
+    ));
+
+    tracing::info!(
+        "UTP middleware initialized (cache size: {}, TTL: {}s, similarity_threshold: {:.2}, compression: Int8)",
+        config.cache.max_entries,
+        config.cache.ttl_seconds,
+        config.cache.similarity_threshold
+    );
+
+    // Initialize agent system
+    let agent_registry = Arc::new(AgentRegistry::new(db_pool.clone()));
+    let agent_executor = Arc::new(AgentExecutor::new(agent_registry.clone()));
+    let flow_executor = Arc::new(FlowExecutor::new(agent_registry.clone(), agent_executor.clone()));
+
+    tracing::info!("Agent system initialized");
+
+    // Initialize vector repository for RAG
+    let vector_repository = Arc::new(VectorRepository::new(db_pool.clone()));
+    tracing::info!("Vector repository initialized");
 
     // Initialize state
     let state = AppState {
@@ -148,6 +236,11 @@ async fn main() {
         model_registry,
         db_pool,
         utp_middleware,
+        agent_registry,
+        agent_executor,
+        flow_executor,
+        vector_repository,
+        embedding_provider,
     };
 
     // Configure CORS for Next.js frontend
@@ -171,15 +264,41 @@ async fn main() {
         .route("/conversations/:id", delete(delete_conversation_handler))
         // UTP stats route
         .route("/utp/stats", get(utp_stats_handler))
+        // RAG/Vector routes
+        .route("/documents", get(list_documents_handler))
+        .route("/documents/upload", post(upload_document_handler))
+        .route("/documents/:id", get(get_document_handler))
+        .route("/documents/:id", delete(delete_document_handler))
+        .route("/rag/query", post(rag_query_handler))
+        .route("/rag/statistics", get(rag_statistics_handler))
+        // Agent routes
+        .route("/agents", get(get_agents_handler))
+        .route("/agents", post(create_agent_handler))
+        .route("/agents/:id", get(get_agent_handler))
+        .route("/agents/:id", post(update_agent_handler))
+        .route("/agents/:id", delete(delete_agent_handler))
+        .route("/agents/:id/execute", post(execute_agent_handler))
+        // Flow routes
+        .route("/flows", get(get_flows_handler))
+        .route("/flows", post(create_flow_handler))
+        .route("/flows/:id", get(get_flow_handler))
+        .route("/flows/:id", delete(delete_flow_handler))
+        .route("/flows/:id/execute", post(execute_flow_handler))
+        .route("/flows/:flow_id/agents/:agent_id", post(add_agent_to_flow_handler))
+        // Edge routes
+        .route("/edges", post(create_edge_handler))
+        .route("/flows/:id/edges", get(get_flow_edges_handler))
         .with_state(state)
+        .layer(DefaultBodyLimit::max(50 * 1024 * 1024))  // 50MB limit for PDF uploads
         .layer(cors);
 
     // Start server
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3001")
+    let bind_addr = format!("{}:{}", config.server.host, config.server.port);
+    let listener = tokio::net::TcpListener::bind(&bind_addr)
         .await
-        .unwrap();
+        .expect("Failed to bind server");
 
-    println!("🚀 Server running on http://127.0.0.1:3001");
+    tracing::info!("Server running on http://{}", bind_addr);
 
     axum::serve(listener, app).await.unwrap();
 }
@@ -286,6 +405,9 @@ async fn chat_handler(
                 None,
                 None,
                 None,
+                None,
+                None,
+                None,
             )
             .await
             .map_err(|e| {
@@ -364,6 +486,9 @@ async fn chat_handler(
                 utp_response.response.tokens_per_second,
                 utp_response.response.total_tokens.map(|t| t as i32),
                 Some(utp_metadata_json),
+                utp_response.response.network_send_ms.map(|t| t as i32),
+                utp_response.response.network_receive_ms.map(|t| t as i32),
+                utp_response.response.network_total_ms.map(|t| t as i32),
             )
             .await
             .map_err(|e| {
@@ -378,6 +503,9 @@ async fn chat_handler(
         response: utp_response.response.content,
         model: payload.model,
         latency_ms,
+        network_send_ms: utp_response.response.network_send_ms,
+        network_receive_ms: utp_response.response.network_receive_ms,
+        network_total_ms: utp_response.response.network_total_ms,
         prompt_tokens: utp_response.response.prompt_tokens,
         completion_tokens: utp_response.response.completion_tokens,
         tokens_per_second: utp_response.response.tokens_per_second,
@@ -582,4 +710,304 @@ async fn utp_stats_handler(
 ) -> impl IntoResponse {
     let stats = state.utp_middleware.get_comparison_stats();
     Json(stats)
+}
+
+// Agent handlers
+async fn get_agents_handler(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let agents = state.agent_registry.get_all_agents().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to fetch agents: {}", e),
+        )
+    })?;
+
+    Ok(Json(agents))
+}
+
+async fn get_agent_handler(
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let agent = state
+        .agent_registry
+        .get_agent(id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to fetch agent: {}", e),
+            )
+        })?
+        .ok_or((StatusCode::NOT_FOUND, "Agent not found".to_string()))?;
+
+    Ok(Json(agent))
+}
+
+async fn create_agent_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<CreateAgentRequest>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let agent = state
+        .agent_registry
+        .create_agent(payload)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to create agent: {}", e),
+            )
+        })?;
+
+    Ok(Json(agent))
+}
+
+async fn update_agent_handler(
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+    Json(payload): Json<UpdateAgentRequest>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let agent = state
+        .agent_registry
+        .update_agent(id, payload)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to update agent: {}", e),
+            )
+        })?;
+
+    Ok(Json(agent))
+}
+
+async fn delete_agent_handler(
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    state.agent_registry.delete_agent(id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to delete agent: {}", e),
+        )
+    })?;
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": "Agent deleted"
+    })))
+}
+
+async fn execute_agent_handler(
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+    Json(payload): Json<ExecuteAgentRequest>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    // Get agent to determine which provider to use
+    let agent = state
+        .agent_registry
+        .get_agent(id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to fetch agent: {}", e),
+            )
+        })?
+        .ok_or((StatusCode::NOT_FOUND, "Agent not found".to_string()))?;
+
+    // Determine provider based on model
+    let model = agent.model.as_ref().ok_or((
+        StatusCode::BAD_REQUEST,
+        "Agent has no model configured".to_string(),
+    ))?;
+
+    let model_metadata = state
+        .model_registry
+        .get_model(model)
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("Unknown model: {}", model),
+            )
+        })?;
+
+    let provider: Arc<dyn ModelProvider> = match model_metadata.provider {
+        ProviderType::Ollama => state.ollama_provider.clone(),
+        ProviderType::Groq => state.groq_provider.clone(),
+    };
+
+    // Execute agent
+    let response = state
+        .agent_executor
+        .execute_agent(id, payload.input, provider)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to execute agent: {}", e),
+            )
+        })?;
+
+    Ok(Json(response))
+}
+
+// Flow handlers
+async fn get_flows_handler(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let flows = state.agent_registry.get_all_flows().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to fetch flows: {}", e),
+        )
+    })?;
+
+    Ok(Json(flows))
+}
+
+async fn get_flow_handler(
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let flow = state
+        .agent_registry
+        .get_flow_with_agents(id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to fetch flow: {}", e),
+            )
+        })?
+        .ok_or((StatusCode::NOT_FOUND, "Flow not found".to_string()))?;
+
+    Ok(Json(flow))
+}
+
+async fn create_flow_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<CreateFlowRequest>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let flow = state
+        .agent_registry
+        .create_flow(payload)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to create flow: {}", e),
+            )
+        })?;
+
+    Ok(Json(flow))
+}
+
+async fn delete_flow_handler(
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    state.agent_registry.delete_flow(id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to delete flow: {}", e),
+        )
+    })?;
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": "Flow deleted"
+    })))
+}
+
+async fn execute_flow_handler(
+    State(state): State<AppState>,
+    Path(flow_id): Path<i32>,
+    Json(payload): Json<ExecuteFlowRequest>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    // Provider resolver closure
+    let model_registry = state.model_registry.clone();
+    let ollama = state.ollama_provider.clone();
+    let groq = state.groq_provider.clone();
+
+    let provider_resolver = move |model: &str| -> Option<Arc<dyn ModelProvider>> {
+        let model_metadata = model_registry.get_model(model)?;
+        match model_metadata.provider {
+            ProviderType::Ollama => Some(ollama.clone()),
+            ProviderType::Groq => Some(groq.clone()),
+        }
+    };
+
+    // Execute flow
+    let result = state
+        .flow_executor
+        .execute_flow(flow_id, payload.input, payload.start_node_id, provider_resolver)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to execute flow: {}", e),
+            )
+        })?;
+
+    Ok(Json(result))
+}
+
+async fn add_agent_to_flow_handler(
+    State(state): State<AppState>,
+    Path((flow_id, agent_id)): Path<(i32, i32)>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    state
+        .agent_registry
+        .add_agent_to_flow(flow_id, agent_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to add agent to flow: {}", e),
+            )
+        })?;
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": "Agent added to flow"
+    })))
+}
+
+// Edge handlers
+async fn create_edge_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<CreateEdgeRequest>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let edge = state
+        .agent_registry
+        .create_edge(payload)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to create edge: {}", e),
+            )
+        })?;
+
+    Ok(Json(edge))
+}
+
+async fn get_flow_edges_handler(
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let edges = state
+        .agent_registry
+        .get_flow_edges(id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to fetch edges: {}", e),
+            )
+        })?;
+
+    Ok(Json(edges))
 }
