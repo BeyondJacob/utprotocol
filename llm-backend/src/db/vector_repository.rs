@@ -193,6 +193,71 @@ impl VectorRepository {
         Ok(results)
     }
 
+    /// Search chunks with document titles (for RAG-enhanced chat)
+    pub async fn search_with_titles(
+        &self,
+        query_embedding: &[f32],
+        top_k: usize,
+    ) -> Result<Vec<RetrievedChunk>> {
+        // Fetch all chunks with document titles via JOIN
+        let rows = sqlx::query!(
+            r#"
+            SELECT
+                dc.id as chunk_id,
+                dc.document_id,
+                d.title as document_title,
+                dc.chunk_index,
+                dc.content,
+                dc.embedding_f32
+            FROM document_chunks dc
+            JOIN documents d ON dc.document_id = d.id
+            WHERE dc.embedding_f32 IS NOT NULL
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        // Compute similarities
+        let mut results: Vec<(RetrievedChunk, f32)> = rows
+            .into_iter()
+            .filter_map(|row| {
+                if let Some(embedding) = row.embedding_f32 {
+                    let similarity = cosine_similarity(query_embedding, &embedding);
+                    Some((
+                        RetrievedChunk {
+                            chunk_id: row.chunk_id,
+                            document_id: row.document_id,
+                            document_title: row.document_title,
+                            chunk_index: row.chunk_index,
+                            content: row.content,
+                            similarity_score: similarity,
+                            rank: 0, // Will be set after sorting
+                        },
+                        similarity,
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Sort by similarity descending
+        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Take top k and set ranks
+        let retrieved: Vec<RetrievedChunk> = results
+            .into_iter()
+            .take(top_k)
+            .enumerate()
+            .map(|(idx, (mut chunk, _similarity))| {
+                chunk.rank = idx + 1;
+                chunk
+            })
+            .collect();
+
+        Ok(retrieved)
+    }
+
     /// Record a RAG query for benchmarking
     #[allow(dead_code)]
     pub async fn record_rag_query(

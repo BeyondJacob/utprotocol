@@ -74,6 +74,16 @@ struct ChatRequest {
     message: String,
     conversation_id: Option<i32>,
     use_utp: Option<bool>,
+    use_rag: Option<bool>,
+    rag_top_k: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+struct RagChunkInfo {
+    content: String,
+    document_title: String,
+    similarity: f32,
+    chunk_index: i32,
 }
 
 #[derive(Debug, Serialize)]
@@ -89,6 +99,7 @@ struct ChatResponse {
     tokens_per_second: Option<f64>,
     total_tokens: Option<u32>,
     utp_metadata: Option<UtpMetadata>,
+    rag_chunks: Option<Vec<RagChunkInfo>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -447,10 +458,84 @@ async fn chat_handler(
         ProviderType::Groq => state.groq_provider.clone(),
     };
 
+    // Retrieve RAG context if requested
+    let use_rag = payload.use_rag.unwrap_or(false);
+    let mut rag_chunks_info: Option<Vec<RagChunkInfo>> = None;
+    let final_message = if use_rag {
+        let top_k = payload.rag_top_k.unwrap_or(3);
+
+        // Generate embedding for user's message
+        let query_embedding = state
+            .embedding_provider
+            .embed(&payload.message)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to generate query embedding: {}", e),
+                )
+            })?;
+
+        // Search for relevant chunks
+        let retrieved_chunks = state
+            .vector_repository
+            .search_with_titles(&query_embedding, top_k)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to search documents: {}", e),
+                )
+            })?;
+
+        if !retrieved_chunks.is_empty() {
+            // Build context from retrieved chunks
+            let context = retrieved_chunks
+                .iter()
+                .enumerate()
+                .map(|(i, chunk)| {
+                    format!(
+                        "[Document {}] {}\n{}",
+                        i + 1,
+                        chunk.document_title,
+                        chunk.content
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n");
+
+            // Save chunk info for response
+            rag_chunks_info = Some(
+                retrieved_chunks
+                    .iter()
+                    .map(|chunk| RagChunkInfo {
+                        content: chunk.content.clone(),
+                        document_title: chunk.document_title.clone(),
+                        similarity: chunk.similarity_score,
+                        chunk_index: chunk.chunk_index,
+                    })
+                    .collect(),
+            );
+
+            // Augment the user's message with RAG context
+            format!(
+                "Use the following context from documents to help answer the question. If the context doesn't contain relevant information, say so.\n\n\
+                Context:\n{}\n\n\
+                Question: {}",
+                context, payload.message
+            )
+        } else {
+            tracing::warn!("RAG enabled but no documents found");
+            payload.message.clone()
+        }
+    } else {
+        payload.message.clone()
+    };
+
     // Route through UTP middleware
     let utp_response = state
         .utp_middleware
-        .generate_with_utp(provider, &payload.model, &payload.message, use_utp)
+        .generate_with_utp(provider, &payload.model, &final_message, use_utp)
         .await
         .map_err(|e| {
             (
@@ -511,6 +596,7 @@ async fn chat_handler(
         tokens_per_second: utp_response.response.tokens_per_second,
         total_tokens: utp_response.response.total_tokens,
         utp_metadata: Some(utp_response.metadata),
+        rag_chunks: rag_chunks_info,
     }))
 }
 

@@ -54,7 +54,6 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 ///
 /// # Panics
 /// Panics if embeddings have different lengths
-#[allow(dead_code)]
 pub fn l2_distance(a: &[f32], b: &[f32]) -> f32 {
     assert_eq!(a.len(), b.len(), "Embeddings must have same dimension");
 
@@ -78,7 +77,6 @@ pub fn l2_distance(a: &[f32], b: &[f32]) -> f32 {
 ///
 /// # Returns
 /// Normalized embedding (unit vector)
-#[allow(dead_code)]
 pub fn normalize(embedding: &[f32]) -> Vec<f32> {
     let magnitude: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
 
@@ -101,7 +99,6 @@ pub fn normalize(embedding: &[f32]) -> Vec<f32> {
 ///
 /// # Returns
 /// Vector of (index, similarity_score) tuples, sorted by score (descending)
-#[allow(dead_code)]
 pub fn top_k_similar(query: &[f32], candidates: &[&[f32]], k: usize) -> Vec<(usize, f32)> {
     let mut similarities: Vec<(usize, f32)> = candidates
         .iter()

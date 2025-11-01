@@ -27,6 +27,13 @@ export type UtpMetadata = {
   trace: TraceStep[];
 };
 
+export type RagChunk = {
+  content: string;
+  document_title: string;
+  similarity: number;
+  chunk_index: number;
+};
+
 export type Message = {
   id: string;
   role: "user" | "assistant";
@@ -41,6 +48,7 @@ export type Message = {
   tokens_per_second?: number;
   total_tokens?: number;
   utp_metadata?: UtpMetadata;
+  rag_chunks?: RagChunk[];
 };
 
 type DbMessage = {
@@ -216,6 +224,8 @@ export function ChatWindow({
           message: text,
           conversation_id: conversationId,
           use_utp: utpEnabled,
+          use_rag: false,
+          rag_top_k: 3,
         }),
       });
 
@@ -239,6 +249,7 @@ export function ChatWindow({
         tokens_per_second: data.tokens_per_second,
         total_tokens: data.total_tokens,
         utp_metadata: data.utp_metadata,
+        rag_chunks: data.rag_chunks,
       };
 
       setMessages((prev) => [...prev, assistantMessage]);

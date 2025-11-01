@@ -394,13 +394,35 @@ pub async fn rag_query_handler(
 /// Get RAG statistics
 pub async fn rag_statistics_handler(
     State(state): State<AppState>,
-) -> Result<Json<VectorStatistics>, (StatusCode, String)> {
-    let stats = state.vector_repository.get_statistics().await.map_err(|e| {
+) -> Result<Json<EnhancedStatistics>, (StatusCode, String)> {
+    // Get base statistics
+    let mut stats = state.vector_repository.get_statistics().await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to get statistics: {}", e),
         )
     })?;
 
-    Ok(Json(stats))
+    // Get actual document count and list
+    let documents = sqlx::query_as!(
+        DocumentInfo,
+        r#"
+        SELECT id, title, total_chunks
+        FROM documents
+        ORDER BY upload_date DESC
+        "#
+    )
+    .fetch_all(&state.db_pool)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to fetch documents: {}", e),
+        )
+    })?;
+
+    // Update the document count with actual count
+    stats.total_documents = documents.len() as i32;
+
+    Ok(Json(EnhancedStatistics { stats, documents }))
 }

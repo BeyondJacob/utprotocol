@@ -8,7 +8,16 @@ import { ChatSidebar, type Conversation } from "./chat-sidebar";
 import { Card, CardHeader, CardTitle, CardContent } from "./ui/card";
 import { Button } from "./ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "./ui/sheet";
-import { Menu } from "lucide-react";
+import { Switch } from "./ui/switch";
+import { Label } from "./ui/label";
+import { Menu, BookOpen } from "lucide-react";
+
+export type RagChunk = {
+  content: string;
+  document_title: string;
+  similarity: number;
+  chunk_index: number;
+};
 
 export type Message = {
   id: string;
@@ -21,6 +30,7 @@ export type Message = {
   network_total_ms?: number;
   tokens_per_second?: number;
   total_tokens?: number;
+  rag_chunks?: RagChunk[];
 };
 
 type DbMessage = {
@@ -60,6 +70,7 @@ export function ChatInterface() {
     number | null
   >(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [useRag, setUseRag] = useState(false);
 
   // Fetch available models and conversations on mount
   useEffect(() => {
@@ -217,6 +228,8 @@ export function ChatInterface() {
           model: currentModel,
           message: text,
           conversation_id: conversationId,
+          use_rag: useRag,
+          rag_top_k: 3,
         }),
       });
 
@@ -237,6 +250,7 @@ export function ChatInterface() {
         network_total_ms: data.network_total_ms,
         tokens_per_second: data.tokens_per_second,
         total_tokens: data.total_tokens,
+        rag_chunks: data.rag_chunks,
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
@@ -362,18 +376,32 @@ export function ChatInterface() {
         {/* Main Chat Area */}
         <Card className="flex-1 flex flex-col border-l-0 rounded-l-none border-t-0 border-r-0 border-b-0 min-w-0 overflow-hidden">
           <CardHeader className="border-b px-3 py-3 md:px-4 md:py-4 lg:px-6 lg:py-4">
-            <div className="flex items-center justify-between gap-2 md:gap-4 min-w-0">
-              <CardTitle className="text-sm md:text-base lg:text-lg font-semibold truncate flex-shrink min-w-0">
-                {getCurrentConversationTitle()}
-              </CardTitle>
-              <div className="flex-shrink-0 min-w-[140px] sm:min-w-[180px] md:min-w-[200px] max-w-[220px] sm:max-w-[280px] md:max-w-[320px] w-auto">
-                <ModelSelector
-                  models={availableModels}
-                  currentModel={currentModel}
-                  onModelChange={switchModel}
-                  onDownloadModel={downloadModel}
-                  onDeleteModel={deleteModel}
+            <div className="flex flex-col gap-2 min-w-0">
+              <div className="flex items-center justify-between gap-2 md:gap-4 min-w-0">
+                <CardTitle className="text-sm md:text-base lg:text-lg font-semibold truncate flex-shrink min-w-0">
+                  {getCurrentConversationTitle()}
+                </CardTitle>
+                <div className="flex-shrink-0 min-w-[140px] sm:min-w-[180px] md:min-w-[200px] max-w-[220px] sm:max-w-[280px] md:max-w-[320px] w-auto">
+                  <ModelSelector
+                    models={availableModels}
+                    currentModel={currentModel}
+                    onModelChange={switchModel}
+                    onDownloadModel={downloadModel}
+                    onDeleteModel={deleteModel}
+                  />
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="rag-mode"
+                  checked={useRag}
+                  onCheckedChange={setUseRag}
                 />
+                <Label htmlFor="rag-mode" className="flex items-center gap-1 text-sm cursor-pointer">
+                  <BookOpen className="h-4 w-4" />
+                  Use Document Knowledge (RAG)
+                  {useRag && <span className="text-xs text-muted-foreground">(Top 3 chunks)</span>}
+                </Label>
               </div>
             </div>
           </CardHeader>

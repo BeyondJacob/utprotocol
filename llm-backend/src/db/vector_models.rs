@@ -163,6 +163,22 @@ pub struct VectorStatistics {
     pub last_updated: DateTime<Utc>,
 }
 
+/// Simple document info for statistics display
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentInfo {
+    pub id: i32,
+    pub title: String,
+    pub total_chunks: i32,
+}
+
+/// Enhanced statistics with document list
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnhancedStatistics {
+    #[serde(flatten)]
+    pub stats: VectorStatistics,
+    pub documents: Vec<DocumentInfo>,
+}
+
 /// Document with statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentWithStats {

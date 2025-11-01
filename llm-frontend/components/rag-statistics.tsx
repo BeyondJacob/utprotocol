@@ -6,6 +6,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 
+interface DocumentInfo {
+  id: number
+  title: string
+  total_chunks: number
+}
+
 interface VectorStatistics {
   id: number
   total_documents: number
@@ -21,6 +27,7 @@ interface VectorStatistics {
   utp_cache_hit_rate: number
   avg_retrieval_overlap: number
   last_updated: string
+  documents: DocumentInfo[]
 }
 
 export function RagStatistics() {
@@ -238,6 +245,39 @@ export function RagStatistics() {
 
             <div className="p-3 rounded-md bg-muted/50 text-xs text-muted-foreground">
               Last updated: {new Date(stats.last_updated).toLocaleString()}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Uploaded Documents List */}
+      {stats.documents && stats.documents.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Uploaded Documents</CardTitle>
+            <CardDescription>
+              {stats.documents.length} document{stats.documents.length !== 1 ? 's' : ''} with {stats.total_chunks} total chunks
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {stats.documents.map((doc) => (
+                <div
+                  key={doc.id}
+                  className="flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-accent/50 transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    <FileText className="h-5 w-5 text-muted-foreground" />
+                    <div>
+                      <p className="font-medium">{doc.title}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {doc.total_chunks} chunk{doc.total_chunks !== 1 ? 's' : ''}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-sm text-muted-foreground">ID: {doc.id}</div>
+                </div>
+              ))}
             </div>
           </CardContent>
         </Card>
