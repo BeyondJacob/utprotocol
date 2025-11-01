@@ -1,14 +1,22 @@
 pub mod ollama;
 pub mod groq;
+pub mod circuit_breaker;
+pub mod rate_limiter;
 
 use async_trait::async_trait;
 use anyhow::Result;
+
+pub use circuit_breaker::CircuitBreaker;
+pub use rate_limiter::RateLimiter;
 
 /// Response from a model provider's generate call
 #[derive(Debug, Clone)]
 pub struct GenerateResponse {
     pub content: String,
     pub latency_ms: u128,
+    pub network_send_ms: Option<u128>,
+    pub network_receive_ms: Option<u128>,
+    pub network_total_ms: Option<u128>,
     pub prompt_tokens: Option<u32>,
     pub completion_tokens: Option<u32>,
     pub total_tokens: Option<u32>,

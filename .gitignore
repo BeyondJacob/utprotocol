@@ -1,2 +1,4 @@
 .env
 CLAUDE_KNOWLEDGE.md
+*.sql
+The Rust Programming Language 1.pdf

@@ -27,17 +27,28 @@ export type UtpMetadata = {
   trace: TraceStep[];
 };
 
+export type RagChunk = {
+  content: string;
+  document_title: string;
+  similarity: number;
+  chunk_index: number;
+};
+
 export type Message = {
   id: string;
   role: "user" | "assistant";
   content: string;
   model?: string;
   latency?: number;
+  network_send_ms?: number;
+  network_receive_ms?: number;
+  network_total_ms?: number;
   prompt_tokens?: number;
   completion_tokens?: number;
   tokens_per_second?: number;
   total_tokens?: number;
   utp_metadata?: UtpMetadata;
+  rag_chunks?: RagChunk[];
 };
 
 type DbMessage = {
@@ -47,6 +58,9 @@ type DbMessage = {
   content: string;
   model: string | null;
   latency_ms: number | null;
+  network_send_ms: number | null;
+  network_receive_ms: number | null;
+  network_total_ms: number | null;
   prompt_tokens: number | null;
   completion_tokens: number | null;
   tokens_per_second: number | null;
@@ -132,6 +146,9 @@ export function ChatWindow({
         content: msg.content,
         model: msg.model ?? undefined,
         latency: msg.latency_ms ?? undefined,
+        network_send_ms: msg.network_send_ms ?? undefined,
+        network_receive_ms: msg.network_receive_ms ?? undefined,
+        network_total_ms: msg.network_total_ms ?? undefined,
         prompt_tokens: msg.prompt_tokens ?? undefined,
         completion_tokens: msg.completion_tokens ?? undefined,
         tokens_per_second: msg.tokens_per_second ?? undefined,
@@ -207,6 +224,8 @@ export function ChatWindow({
           message: text,
           conversation_id: conversationId,
           use_utp: utpEnabled,
+          use_rag: false,
+          rag_top_k: 3,
         }),
       });
 
@@ -222,11 +241,15 @@ export function ChatWindow({
         content: data.response,
         model: data.model,
         latency: data.latency_ms,
+        network_send_ms: data.network_send_ms,
+        network_receive_ms: data.network_receive_ms,
+        network_total_ms: data.network_total_ms,
         prompt_tokens: data.prompt_tokens,
         completion_tokens: data.completion_tokens,
         tokens_per_second: data.tokens_per_second,
         total_tokens: data.total_tokens,
         utp_metadata: data.utp_metadata,
+        rag_chunks: data.rag_chunks,
       };
 
       setMessages((prev) => [...prev, assistantMessage]);

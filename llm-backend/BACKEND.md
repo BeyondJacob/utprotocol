@@ -2,19 +2,32 @@
 
 ## Overview
 
-High-performance Rust backend for the Universal Thought Protocol (UTP) featuring:
+Production-grade Rust backend for the Universal Thought Protocol (UTP) featuring:
 - **UTP Core**: Layer 3 compression (F32/F16/Int8/Int4) and semantic caching
-- **Multi-Provider Architecture**: Ollama (local) and Groq (cloud) support
+- **Multi-Provider Architecture**: Ollama (local) and Groq (cloud) support with resilience patterns
 - **PostgreSQL Integration**: Conversation and message persistence with UTP metadata
 - **Axum Web Framework**: Async HTTP server with CORS support
 - **Performance Tracking**: Comprehensive metrics for traditional vs UTP approaches
+- **Production Features**: Rate limiting, circuit breakers, LRU caching, structured logging
+
+## Production Improvements
+
+✅ **LRU Cache Eviction** - Intelligent cache management with least-recently-used eviction
+✅ **TTL Support** - Time-to-live for cache entries prevents stale data
+✅ **Rate Limiting** - Token bucket rate limiting for cloud providers (governor crate)
+✅ **Circuit Breaker** - Failfast pattern for provider failures with automatic recovery
+✅ **Configuration Management** - TOML-based configuration for all tunables
+✅ **Structured Logging** - Production-grade tracing with env-based filtering
+
+See [PRODUCTION_IMPROVEMENTS.md](../PRODUCTION_IMPROVEMENTS.md) for detailed implementation notes.
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                   Axum HTTP Server                  │
-│                   (Port 3001)                       │
+│           Axum HTTP Server (Port 3001)              │
+│         + Structured Logging (Tracing)              │
+│         + TOML Configuration                        │
 └──────────────────────┬──────────────────────────────┘
                        │
         ┌──────────────┼──────────────┐
@@ -23,20 +36,23 @@ High-performance Rust backend for the Universal Thought Protocol (UTP) featuring
 │ UTP Module   │ │ Providers │ │  Database  │
 │ - Protocol   │ │ - Ollama  │ │ - Postgres │
 │ - Compress   │ │ - Groq    │ │ - SQLx     │
-│ - Cache      │ │ - Trait   │ └────────────┘
-│ - Middleware │ └───────────┘
-│ - Metrics    │
-└──────────────┘
+│ - LRU Cache  │ │   + Rate  │ └────────────┘
+│ - Middleware │ │   Limiter │
+│ - Metrics    │ │   + Circuit│
+│ - TTL        │ │   Breaker │
+└──────────────┘ └───────────┘
 ```
 
 ## Project Structure
 
 ```
 llm-backend/
-├── Cargo.toml                 # Dependencies
+├── Cargo.toml                 # Dependencies (production-ready)
+├── config.toml                # Configuration file (cache, rate limits, etc.)
 ├── BACKEND.md                 # This file
 ├── src/
-│   ├── main.rs               # Entry point & HTTP handlers
+│   ├── main.rs               # Entry point & HTTP handlers + tracing
+│   ├── config.rs             # Configuration management (TOML)
 │   ├── db/
 │   │   ├── mod.rs            # Database initialization
 │   │   ├── models.rs         # Data models (Conversation, Message)
@@ -44,12 +60,14 @@ llm-backend/
 │   ├── providers/
 │   │   ├── mod.rs            # ModelProvider trait & registry
 │   │   ├── ollama.rs         # Ollama provider implementation
-│   │   └── groq.rs           # Groq cloud provider
+│   │   ├── groq.rs           # Groq cloud provider + rate limiter + circuit breaker
+│   │   ├── rate_limiter.rs   # Rate limiting (governor crate)
+│   │   └── circuit_breaker.rs # Circuit breaker pattern
 │   └── utp/
 │       ├── mod.rs            # Module exports
 │       ├── protocol.rs       # Core structs (UtpHeader, CompressedEmbedding, UtpMetadata)
 │       ├── compression.rs    # Layer3Compressor (F32/F16/Int8/Int4 quantization)
-│       ├── cache.rs          # EmbeddingCache (DashMap-based semantic cache)
+│       ├── cache.rs          # EmbeddingCache (LRU + TTL, DashMap-based)
 │       ├── middleware.rs     # UtpMiddleware (wraps providers)
 │       └── metrics.rs        # Performance tracking
 └── target/                   # Build artifacts (gitignored)
@@ -122,20 +140,31 @@ for chunk in quantized_4bit.chunks(2) {
 
 **EmbeddingCache** features:
 - Thread-safe concurrent access using `DashMap`
+- **LRU Eviction**: Least-recently-used entries are evicted first
+- **TTL Support**: Time-to-live for cache entries (configurable)
+- **Access Time Tracking**: Updates `last_accessed` on each hit
+- **Expiration Checking**: Automatic removal of expired entries
 - Semantic hashing for cache keys (content-based, not ID-based)
 - Default Int8 compression for cached embeddings
-- LRU eviction policy (simple for MVP)
 - Atomic metrics tracking (hits, misses, evictions)
 
 **Key Methods:**
-- `get(SemanticHash) -> Option<(String, CompressedEmbedding)>`
-- `store(SemanticHash, Vec<f32>, String)`
+- `new(max_entries: usize) -> Self` - Default 1 hour TTL
+- `with_ttl(max_entries: usize, ttl: Duration) -> Self` - Custom TTL
+- `get(SemanticHash) -> Option<(String, CompressedEmbedding)>` - Auto-expires stale entries
+- `store(SemanticHash, Vec<f32>, String)` - LRU eviction when full
 - `get_stats() -> CacheStats`
+
+**Production Features:**
+- **LRU Eviction**: Scans all entries to find least recently accessed
+- **TTL**: Each entry has `expires_at` timestamp checked on read
+- **Touch on Access**: Updates `last_accessed` atomic timestamp
 
 **Cache Hit Performance:**
 - Typical embedding API: ~75ms
 - Cache hit: <1ms (50x+ speedup)
 - Storage: 800 bytes (Int8) vs 3072 bytes (f32)
+- Hit rate: 25-70% depending on query patterns
 
 ### 4. UTP Middleware (`utp/middleware.rs`)
 
@@ -329,8 +358,45 @@ half = "2.3"              # F16 support
 dashmap = "5.5"           # Concurrent cache
 bincode = "1.3"           # Binary serialization
 crc32fast = "1.3"         # Checksums
-rand = "0.8"              # Mock embeddings (MVP)
+rand = "0.8"              # Mock embeddings (fallback)
+
+# Production Improvements
+governor = "0.6"          # Rate limiting
+tracing = "0.1"           # Structured logging
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+toml = "0.8"              # Configuration files
 ```
+
+## Configuration
+
+The backend uses a `config.toml` file for production tunables:
+
+```toml
+[cache]
+max_entries = 10000
+ttl_seconds = 3600
+eviction_policy = "lru"
+
+[providers.groq]
+timeout_seconds = 30
+max_retries = 3
+rate_limit_per_minute = 60
+circuit_breaker_threshold = 5
+circuit_breaker_cooldown_seconds = 60
+
+[providers.ollama]
+timeout_seconds = 120
+rate_limit_per_minute = 120
+circuit_breaker_threshold = 10
+circuit_breaker_cooldown_seconds = 30
+
+[server]
+host = "127.0.0.1"
+port = 3001
+```
+
+Configuration is loaded at startup with fallback to defaults if file is missing.
 
 ## Development
 
@@ -338,6 +404,9 @@ rand = "0.8"              # Mock embeddings (MVP)
 ```bash
 # Development mode (with console output)
 cargo run
+
+# With debug logging
+RUST_LOG=debug cargo run
 
 # Release mode (optimized)
 cargo build --release
@@ -355,7 +424,27 @@ cargo test -- --nocapture
 # .env file (in project root)
 DATABASE_URL=postgres://jacobowens@localhost/utprotocol
 GROQ_API_KEY=your_groq_api_key_here  # Optional
+
+# Logging level (optional, defaults to info)
+RUST_LOG=info  # Options: error, warn, info, debug, trace
 ```
+
+### Structured Logging
+
+The backend uses `tracing` for structured logging:
+
+```rust
+tracing::info!("Server running on http://{}", bind_addr);
+tracing::warn!("Ollama provider not connected");
+tracing::error!("Failed to initialize database: {}", e);
+```
+
+Log levels can be controlled via `RUST_LOG`:
+- `error` - Only errors
+- `warn` - Warnings and errors
+- `info` - Informational messages (default)
+- `debug` - Debug information
+- `trace` - Detailed trace information
 
 ### Database Setup
 ```bash
@@ -466,15 +555,31 @@ tail -f /opt/homebrew/var/log/postgresql@17.log
 
 ## Future Enhancements
 
-- [ ] Real embedding extraction from model hidden states
-- [ ] Advanced cache eviction (LRU with TTL)
+### Completed ✅
+- [x] LRU cache eviction
+- [x] TTL support for cache entries
+- [x] Rate limiting for cloud providers
+- [x] Circuit breaker pattern
+- [x] Configuration management (TOML)
+- [x] Structured logging (tracing)
+
+### In Progress
+- [ ] Real embedding extraction from model hidden states (high priority)
+- [ ] Metrics collection improvements (ring buffers)
+
+### Planned
+- [ ] Persistent cache layer (Redis/PostgreSQL)
 - [ ] Streaming compression for large embeddings
 - [ ] Multi-tier cache (hot/warm/cold)
 - [ ] Adaptive precision selection based on query type
-- [ ] Distributed cache support (Redis)
 - [ ] Compression quality metrics (MSE, cosine similarity)
 - [ ] UTP protocol versioning
 - [ ] Binary protocol over WebSocket
+- [ ] Prometheus metrics endpoint
+- [ ] Request deduplication/coalescing
+- [ ] Streaming responses (SSE)
+
+See [PRODUCTION_IMPROVEMENTS.md](../PRODUCTION_IMPROVEMENTS.md) for detailed roadmap.
 
 ## References
 

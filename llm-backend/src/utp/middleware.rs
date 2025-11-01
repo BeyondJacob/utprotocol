@@ -1,9 +1,9 @@
 use super::cache::{CacheStats, EmbeddingCache, SemanticHash};
 use super::compression::Compressor;
+use super::embeddings::EmbeddingProvider;
 use super::metrics::{MetricsSnapshot, UtpMetrics};
 use super::protocol::{Precision, UtpMetadata};
 use crate::providers::{GenerateResponse, ModelProvider};
-use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Instant;
@@ -26,15 +26,32 @@ pub struct ComparisonStats {
 pub struct UtpMiddleware {
     cache: Arc<EmbeddingCache>,
     compressor: Compressor,
+    embedding_provider: Arc<dyn EmbeddingProvider>,
     pub metrics: Arc<UtpMetrics>,
+    similarity_threshold: f32, // NEW: Threshold for semantic similarity cache hits
 }
 
 impl UtpMiddleware {
-    pub fn new(cache: Arc<EmbeddingCache>, compressor: Compressor) -> Self {
+    pub fn new(
+        cache: Arc<EmbeddingCache>,
+        compressor: Compressor,
+        embedding_provider: Arc<dyn EmbeddingProvider>,
+    ) -> Self {
+        Self::with_similarity_threshold(cache, compressor, embedding_provider, 0.92)
+    }
+
+    pub fn with_similarity_threshold(
+        cache: Arc<EmbeddingCache>,
+        compressor: Compressor,
+        embedding_provider: Arc<dyn EmbeddingProvider>,
+        similarity_threshold: f32,
+    ) -> Self {
         Self {
             cache,
             compressor,
+            embedding_provider,
             metrics: Arc::new(UtpMetrics::new()),
+            similarity_threshold,
         }
     }
 
@@ -53,8 +70,8 @@ impl UtpMiddleware {
             let response = provider.generate(model, prompt).await?;
             let latency_us = start.elapsed().as_micros() as u64;
 
-            // Estimate size for traditional approach based on prompt length
-            let embedding_dim = self.estimate_embedding_dimension(prompt);
+            // Use actual embedding dimension from provider
+            let embedding_dim = self.embedding_provider.dimension();
             let estimated_size = embedding_dim * 4; // f32 = 4 bytes per dimension
 
             // Record traditional metrics
@@ -68,22 +85,72 @@ impl UtpMiddleware {
         // UTP path with caching and compression
         let semantic_hash = SemanticHash::from_text(prompt);
 
-        // Estimate embedding dimension based on prompt length
-        let embedding_dim = self.estimate_embedding_dimension(prompt);
-
-        // Compression timing (even for cache hit, we measure hypothetical compression)
-        let compress_start = Instant::now();
-        let mock_embedding = self.generate_mock_embedding(embedding_dim);
-        let _compressed_test = self.compressor.compress(&mock_embedding, Precision::Int8);
-        let compression_time_us = compress_start.elapsed().as_micros() as u64;
-
-        // Cache lookup timing
+        // First, try exact match (fast path)
         let cache_start = Instant::now();
-        let cache_result = self.cache.get(semantic_hash);
+        let exact_match = self.cache.get(semantic_hash);
+
+        if let Some((cached_response, cached_embedding)) = exact_match {
+            let latency_us = start.elapsed().as_micros() as u64;
+            let cache_lookup_time_us = cache_start.elapsed().as_micros() as u64;
+
+            // Calculate compression metrics from cached embedding
+            let original_size = cached_embedding.dimension as usize * 4; // f32 = 4 bytes
+            let compressed_size = self
+                .compressor
+                .get_compressed_size(cached_embedding.dimension, cached_embedding.precision);
+            let compression_ratio =
+                self.compressor
+                    .calculate_compression_ratio(original_size, compressed_size);
+
+            // Record UTP metrics
+            self.metrics.record_utp(latency_us, compressed_size);
+
+            tracing::debug!("Exact cache hit for query");
+
+            let metadata = UtpMetadata::utp(
+                true, // cache_hit
+                compression_ratio,
+                latency_us,
+                original_size,
+                compressed_size,
+                cached_embedding.precision,
+                0, // no compression needed on cache hit
+                cache_lookup_time_us,
+                0, // no LLM call on cache hit
+            );
+
+            // Create a mock GenerateResponse from cache
+            let response = GenerateResponse {
+                content: cached_response,
+                latency_ms: (latency_us / 1000) as u128,
+                network_send_ms: None,
+                network_receive_ms: None,
+                network_total_ms: None,
+                prompt_tokens: None,
+                completion_tokens: None,
+                total_tokens: None,
+                tokens_per_second: None,
+            };
+
+            return Ok(UtpGenerateResponse { response, metadata });
+        }
+
+        // Exact match failed - generate embedding for semantic search
+        let embedding_start = Instant::now();
+        let query_embedding = match self.embedding_provider.embed(prompt).await {
+            Ok(emb) => emb,
+            Err(e) => {
+                tracing::warn!("Failed to generate embedding: {}, using fallback", e);
+                self.generate_fallback_embedding(prompt)
+            }
+        };
+        let embedding_time_us = embedding_start.elapsed().as_micros() as u64;
+
+        // Try semantic similarity search
+        let semantic_result = self.cache.get_similar(&query_embedding, self.similarity_threshold);
         let cache_lookup_time_us = cache_start.elapsed().as_micros() as u64;
 
-        // Check cache
-        if let Some((cached_response, cached_embedding)) = cache_result {
+        if let Some((cached_response, cached_embedding, similarity)) = semantic_result {
             let latency_us = start.elapsed().as_micros() as u64;
 
             // Calculate compression metrics from cached embedding
@@ -98,6 +165,12 @@ impl UtpMiddleware {
             // Record UTP metrics
             self.metrics.record_utp(latency_us, compressed_size);
 
+            tracing::info!(
+                "Semantic cache hit: similarity={:.4}, threshold={:.4}, saved LLM call",
+                similarity,
+                self.similarity_threshold
+            );
+
             let metadata = UtpMetadata::utp(
                 true, // cache_hit
                 compression_ratio,
@@ -105,15 +178,18 @@ impl UtpMiddleware {
                 original_size,
                 compressed_size,
                 cached_embedding.precision,
-                compression_time_us,
+                0, // no compression on cache hit
                 cache_lookup_time_us,
-                0, // no LLM call on cache hit
+                embedding_time_us, // embedding was generated for semantic search
             );
 
             // Create a mock GenerateResponse from cache
             let response = GenerateResponse {
                 content: cached_response,
                 latency_ms: (latency_us / 1000) as u128,
+                network_send_ms: None,
+                network_receive_ms: None,
+                network_total_ms: None,
                 prompt_tokens: None,
                 completion_tokens: None,
                 total_tokens: None,
@@ -124,14 +200,18 @@ impl UtpMiddleware {
         }
 
         // Cache miss - generate new response
+        // Note: We already generated the embedding above for semantic search,
+        // so we reuse it here (query_embedding)
         let llm_start = Instant::now();
         let response = provider.generate(model, prompt).await?;
         let llm_time_us = llm_start.elapsed().as_micros() as u64;
 
         // Compress embedding (default to Int8 for cache)
-        // Note: mock_embedding already generated above for timing
-        let compressed = self.compressor.compress(&mock_embedding, Precision::Int8);
-        let original_size = embedding_dim * 4; // f32 = 4 bytes
+        let compress_start = Instant::now();
+        let compressed = self.compressor.compress(&query_embedding, Precision::Int8);
+        let compression_time_us = compress_start.elapsed().as_micros() as u64;
+
+        let original_size = query_embedding.len() * 4; // f32 = 4 bytes
         let compressed_size = self
             .compressor
             .get_compressed_size(compressed.dimension, compressed.precision);
@@ -141,7 +221,16 @@ impl UtpMiddleware {
 
         // Store in cache
         self.cache
-            .store(semantic_hash, mock_embedding, response.content.clone());
+            .store(semantic_hash, query_embedding, response.content.clone());
+
+        tracing::debug!(
+            "UTP: Generated embedding ({} dims) in {}μs, compressed to {} bytes ({}x compression) in {}μs",
+            compressed.dimension,
+            embedding_time_us,
+            compressed_size,
+            compression_ratio,
+            compression_time_us
+        );
 
         let latency_us = start.elapsed().as_micros() as u64;
 
@@ -171,43 +260,34 @@ impl UtpMiddleware {
         }
     }
 
-    /// Generate mock embedding for MVP (random normal distribution)
-    /// In production, this would be replaced with actual model embeddings
-    fn generate_mock_embedding(&self, dimension: usize) -> Vec<f32> {
-        let mut rng = rand::thread_rng();
+    /// Fallback embedding generation when real embedding provider fails
+    /// Uses deterministic mock embeddings based on text hash for consistent caching
+    fn generate_fallback_embedding(&self, text: &str) -> Vec<f32> {
+        use rand::{Rng, SeedableRng};
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        // Generate deterministic embeddings based on text hash
+        let mut hasher = DefaultHasher::new();
+        text.hash(&mut hasher);
+        let seed = hasher.finish();
+
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        let dimension = self.embedding_provider.dimension();
+
         (0..dimension)
             .map(|_| rng.gen_range(-1.0..1.0))
             .collect()
-    }
-
-    /// Estimate embedding dimension based on prompt length
-    /// Rough approximation: 1 token ≈ 4 chars, models use ~1-2 dimensions per token
-    /// Common models: 768-dim (small), 1024-dim (medium), 1536-dim (large)
-    fn estimate_embedding_dimension(&self, prompt: &str) -> usize {
-        // Estimate token count (rough: 1 token ≈ 4 characters)
-        let estimated_tokens = (prompt.len() / 4).max(1);
-
-        // Base dimension per model (simulating different model sizes)
-        // We'll use a base of 768 for smaller prompts, scaling up for longer ones
-        let base_dim = 768;
-
-        // Scale dimension based on token count
-        // Small prompts (~10 tokens): 768 dim
-        // Medium prompts (~50 tokens): 1024 dim
-        // Large prompts (~200+ tokens): 1536-2048 dim
-        match estimated_tokens {
-            1..=20 => base_dim,                          // 768
-            21..=100 => base_dim + (estimated_tokens * 2), // 768-968
-            _ => (base_dim * 2).min(2048),              // 1536, capped at 2048
-        }
     }
 }
 
 impl Default for UtpMiddleware {
     fn default() -> Self {
+        use super::embeddings::MockEmbeddingProvider;
         Self::new(
             Arc::new(EmbeddingCache::default()),
             Compressor::default(),
+            Arc::new(MockEmbeddingProvider::default()),
         )
     }
 }
@@ -229,6 +309,9 @@ mod tests {
             Ok(GenerateResponse {
                 content: self.response.clone(),
                 latency_ms: 100,
+                network_send_ms: Some(10),
+                network_receive_ms: Some(5),
+                network_total_ms: Some(15),
                 prompt_tokens: Some(10),
                 completion_tokens: Some(20),
                 total_tokens: Some(30),
