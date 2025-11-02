@@ -1,0 +1,89 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:18-alpine
+    container_name: utprotocol-postgres-dev
+    environment:
+      POSTGRES_USER: utprotocol
+      POSTGRES_PASSWORD: utprotocol_password
+      POSTGRES_DB: utprotocol
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U utprotocol"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - utprotocol-network
+    restart: unless-stopped
+
+  # Rust Backend
+  backend:
+    build:
+      context: ./llm-backend
+      dockerfile: Dockerfile
+    container_name: utprotocol-backend-dev
+    environment:
+      # Database configuration
+      DATABASE_URL: postgres://utprotocol:utprotocol_password@postgres:5432/utprotocol
+
+      # Ollama configuration (host machine)
+      OLLAMA_URL: http://host.docker.internal:11434
+
+      # Logging
+      RUST_LOG: debug
+
+      # Server configuration
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 3001
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - utprotocol-network
+    restart: unless-stopped
+    # Development: mount source code for hot reload (requires cargo watch)
+    # Uncomment the following lines if you want to develop inside the container
+    # volumes:
+    #   - ./llm-backend/src:/app/src:ro
+    #   - ./llm-backend/config.toml:/app/config.toml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # Next.js Frontend
+  frontend:
+    build:
+      context: ./llm-frontend
+      dockerfile: Dockerfile
+    container_name: utprotocol-frontend-dev
+    environment:
+      # Backend API URL (use Docker network hostname)
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+
+      # Node environment
+      NODE_ENV: production
+
+      # Disable telemetry
+      NEXT_TELEMETRY_DISABLED: 1
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - utprotocol-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data_dev:
+    driver: local
+
+networks:
+  utprotocol-network:
+    driver: bridge

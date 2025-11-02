@@ -50,7 +50,9 @@ circuit_breaker_cooldown_seconds = 30
 
 [server]
 # Server host
-host = "127.0.0.1"
+# Use "0.0.0.0" for Docker (allows external connections)
+# Use "127.0.0.1" for local development (localhost only)
+host = "0.0.0.0"
 
 # Server port
 port = 3001

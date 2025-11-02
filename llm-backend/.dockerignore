@@ -1,0 +1,38 @@
+# Build artifacts
+target/
+debug/
+Cargo.lock
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+
+# Documentation (not needed in container)
+*.md
+!README.md
+
+# Git
+.git/
+.gitignore
+
+# Test files
+tests/
+
+# Backup files
+**/*.rs.bk
+*.pdb
